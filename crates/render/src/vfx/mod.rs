@@ -106,11 +106,12 @@ impl FxEnv for ItemEnv<'_> {
             frame_rate: self.seq.settings.frame_rate.as_f64(),
             working: self.seq.settings.color.working,
         };
-        for e in &self.item.effects {
+        // the media's source clip effects come first, as they do on the clip itself
+        for e in crate::clip_effects(self.project, self.item) {
             if std::ptr::eq(e, upto) {
                 break;
             }
-            if e.def().is_some_and(|d| !d.intrinsic) && !filmcraft_project::graphic::is_layer(e) && !is_temporal(&e.effect) {
+            if !is_temporal(&e.effect) {
                 crate::mask::apply_effect(&mut img, e, &cx);
             }
         }

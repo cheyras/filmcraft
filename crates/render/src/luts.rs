@@ -112,6 +112,30 @@ pub fn resolve(project: Option<&Project>, spec: &str) -> Option<Arc<Lut>> {
     cached(key, || Lut::parse(&entry.text, fmt).ok())
 }
 
+/// Whether `spec` names a LUT that exists: a built-in, or an entry of the project's library. Cheap
+/// (no parsing, no hashing): for deciding which render path a clip takes. [`resolve`] can still
+/// fail on a library entry that does not parse.
+pub fn exists(project: Option<&Project>, spec: &str) -> bool {
+    let spec = spec.trim();
+    if let Some(id) = spec.strip_prefix("builtin:") {
+        return builtins().iter().any(|b| b.id == id);
+    }
+    spec.strip_prefix("lib:").is_some_and(|id| project.is_some_and(|p| p.luts.iter().any(|l| l.id == id)))
+}
+
+/// A key naming what the LUT reference `spec` resolves to: it changes when a library LUT's content
+/// changes, not only when the reference does. `None` for "" and references that do not resolve.
+/// For cache keys and hashes that cover pictures rendered through a LUT.
+pub fn content_key(project: Option<&Project>, spec: &str) -> Option<String> {
+    let spec = spec.trim();
+    if let Some(id) = spec.strip_prefix("builtin:") {
+        return builtins().iter().any(|b| b.id == id).then(|| format!("builtin:{id}"));
+    }
+    let id = spec.strip_prefix("lib:")?;
+    let entry = project?.luts.iter().find(|l| l.id == id)?;
+    Some(format!("lib:{:016x}:{}", hash(&entry.text), entry.format))
+}
+
 fn hash(s: &str) -> u64 {
     // FNV-1a
     let mut h = 0xcbf2_9ce4_8422_2325u64;
@@ -157,6 +181,30 @@ mod tests {
         let c = [0.3, 0.5, 0.7];
         let (a, want) = (lk.apply(c), crate::effects::apply_look(1, c));
         assert!((0..3).all(|k| (a[k] - want[k]).abs() < 0.01), "{a:?} vs {want:?}");
+    }
+
+    #[test]
+    fn references_report_existence_and_content() {
+        let mut p = Project::new("t");
+        let swap = |c: [f32; 3]| [c[2], c[1], c[0]];
+        let entry = |f: &dyn Fn([f32; 3]) -> [f32; 3]| filmcraft_project::ProjectLut {
+            id: "a".into(),
+            name: "A".into(),
+            source_path: None,
+            format: "cube".into(),
+            text: Lut::from_cube(Lut3d::from_fn(5, f)).to_cube().as_str().into(),
+        };
+        p.luts.push(entry(&swap));
+        let q = Some(&p);
+        assert!(exists(q, "lib:a") && exists(q, " lib:a ") && exists(None, "builtin:slog3-sgamut3cine-to-rec709"));
+        assert!(!exists(q, "lib:b") && !exists(None, "lib:a") && !exists(q, "") && !exists(q, "builtin:nope") && !exists(q, "a") && !exists(q, "lib:"));
+        let key = content_key(q, "lib:a");
+        assert!(key.is_some() && content_key(q, "lib:b").is_none() && content_key(None, "lib:a").is_none());
+        assert_eq!(content_key(None, "builtin:look-teal-orange").as_deref(), Some("builtin:look-teal-orange"));
+        assert_eq!(content_key(None, "builtin:nope"), None);
+        // the same id with other content is another key
+        p.luts[0] = entry(&|c| c);
+        assert_ne!(content_key(Some(&p), "lib:a"), key);
     }
 
     #[test]

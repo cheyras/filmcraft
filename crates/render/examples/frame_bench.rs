@@ -103,6 +103,7 @@ fn project(layers: &[Arc<VideoFrame>]) -> (Project, filmcraft_project::ItemId, S
                 offline: false,
                 proxy: None,
                 identity: None,
+                source_effects: Vec::new(),
             }),
             None,
         );

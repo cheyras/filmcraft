@@ -44,6 +44,7 @@ fn make_movie(path: &Path, scene: DemoScene, frames: i64) {
         offline: false,
         proxy: None,
         identity: None,
+        source_effects: Vec::new(),
     };
     let mut p = Project::new("fixture");
     let item = p.add_item("scene", Label::Iris, ItemKind::Media(clip), None);

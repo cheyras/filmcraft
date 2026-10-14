@@ -36,6 +36,7 @@ fn make_cut_movie(path: &Path, shots: &[(DemoScene, i64)], w: u32, h: u32) {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         };
         let item = p.add_item(&format!("shot{k}"), Label::Iris, ItemKind::Media(clip), None);
         let mut v = p.make_track_item(item, TrackKind::Video, at, TimeRange::new(rate.tick_of(10 * k as i64), dur), rate).unwrap();

@@ -72,6 +72,7 @@ fn project(src: (u32, u32), src_par: (u32, u32), seq: (u32, u32), seq_par: (u32,
         offline: false,
         proxy: None,
         identity: None,
+        source_effects: Vec::new(),
     };
     let item = p.add_item("halves", Label::Iris, ItemKind::Media(clip), None);
     let settings = SequenceSettings { width: seq.0, height: seq.1, par: seq_par, frame_rate: FPS, ..Default::default() };

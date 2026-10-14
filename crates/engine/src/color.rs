@@ -14,6 +14,7 @@ use filmcraft_project::{ClipId, ItemId, ItemKind, ParamValue, ProjectLut, TrackK
 use serde_json::{Value, json};
 
 use crate::commands::{CommandSpec, always, bad, bool_p, clip_p, has_seq, item_p, str_p, time_p};
+use crate::source_effects::{EffectTarget, names_item};
 use crate::{Result, Session};
 
 type Run = fn(&mut Session, &Value) -> Result<Value>;
@@ -46,7 +47,14 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         ),
         query("color.spaces", "List Colour Spaces", "{}", spaces),
         query("lumetri.presets", "List Lumetri Presets", r#"{"folder":str?}"#, list_presets),
-        spec("lumetri.applyPreset", "Apply Lumetri Preset", &[], r#"{"name":str,"clips":[id]?}"#, has_seq, apply_preset),
+        spec(
+            "lumetri.applyPreset",
+            "Apply Lumetri Preset",
+            &[],
+            r#"{"name":str,"clips":[id]?,"item":id?,"items":[id]? (media items or subclips: the preset becomes a source clip effect)}"#,
+            always,
+            apply_preset,
+        ),
         query(
             "lumetri.presetThumbnails",
             "Lumetri Preset Thumbnails",
@@ -58,35 +66,46 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         query("lut.list", "List LUTs", "{}", list),
         spec("lut.remove", "Remove LUT", &[], r#"{"id":str}"#, always, remove),
         query("lut.export", "Export LUT", r#"{"lut":"lib:<id>"|"builtin:<id>","path":str,"format":"cube"|"3dl"?}"#, export),
-        spec("lumetri.setInputLut", "Set Input LUT", &[], r#"{"clip":id?,"lut":"lib:<id>"|"builtin:<id>"|""?,"path":str?}"#, has_seq, |s, p| {
-            set_lut(s, p, "input_lut")
-        }),
-        spec("lumetri.setLook", "Set Creative Look", &[], r#"{"clip":id?,"lut":"lib:<id>"|"builtin:<id>"|""?,"path":str?}"#, has_seq, |s, p| {
+        spec(
+            "lumetri.setInputLut",
+            "Set Input LUT",
+            &[],
+            r#"{"clip":id?,"item":id? (a media item or subclip: its source clip effects get the Lumetri),"lut":"lib:<id>"|"builtin:<id>"|""?,"path":str?}"#,
+            always,
+            |s, p| set_lut(s, p, "input_lut"),
+        ),
+        spec("lumetri.setLook", "Set Creative Look", &[], r#"{"clip":id?,"item":id?,"lut":"lib:<id>"|"builtin:<id>"|""?,"path":str?}"#, always, |s, p| {
             set_lut(s, p, "look_lut")
         }),
         spec(
             "lumetri.applyMatch",
             "Apply Match",
             &[],
-            r#"{"clip":id?,"referenceTime":ticks?|"referenceFrame":n?|"referenceTimecode":str?,"faceDetection":bool=true}"#,
-            has_seq,
+            r#"{"clip":id?,"referenceTime":ticks?|"referenceFrame":n?|"referenceTimecode":str?,"faceDetection":bool=true} (timeline clips only: `item` is refused)"#,
+            always,
             apply_match,
         ),
         spec(
             "lumetri.setSection",
             "Toggle Lumetri Section",
             &[],
-            r#"{"clip":id?,"section":"basic"|"creative"|"curves"|"wheels"|"hsl"|"vignette","on":bool?}"#,
-            has_seq,
+            r#"{"clip":id?,"item":id?,"section":"basic"|"creative"|"curves"|"wheels"|"hsl"|"vignette","on":bool?}"#,
+            always,
             set_section,
         ),
     ]
 }
 
-fn import_lut(s: &mut Session, path: &str, name: Option<&str>) -> Result<(String, Value)> {
+/// Read and parse a LUT file (what `lut.import` refuses before it changes anything).
+fn read_lut(path: &str) -> Result<(String, LutFormat, Lut)> {
     let text = std::fs::read_to_string(path).map_err(|e| bad("lut.import", format!("{path}: {e}")))?;
     let fmt = LutFormat::from_path(path).ok_or_else(|| bad("lut.import", "expected a .cube or .3dl file"))?;
     let lut = Lut::parse(&text, Some(fmt)).map_err(|e| bad("lut.import", format!("{path}: {e}")))?;
+    Ok((text, fmt, lut))
+}
+
+fn import_lut(s: &mut Session, path: &str, name: Option<&str>) -> Result<(String, Value)> {
+    let (text, fmt, lut) = read_lut(path)?;
     let stem = std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "LUT".into());
     let name = name.map(str::to_string).unwrap_or(stem);
     // re-importing identical content reuses the entry
@@ -197,6 +216,41 @@ pub(crate) fn set_lumetri_param(s: &mut Session, clip: ClipId, idx: usize, param
 
 fn set_lut(s: &mut Session, p: &Value, param: &str) -> Result<Value> {
     let cmd = if param == "input_lut" { "lumetri.setInputLut" } else { "lumetri.setLook" };
+    let label = if param == "input_lut" { "Input LUT" } else { "Creative Look" };
+    // a media item: its source clip effects, the import (if any) and the setting one undo step
+    if names_item(p) {
+        let media = source_media_p(s, p, cmd)?;
+        let set = |s: &mut Session| {
+            let r = lut_ref(s, p, cmd)?;
+            set_source_lumetri_param(s, media, param, ParamValue::Text(r.clone()), label)?;
+            Ok(json!({"item": media.0, "lut": r, "name": filmcraft_render::luts::label(Some(&s.project), &r)}))
+        };
+        // (only an import has a step of its own to group with the setting; a file that cannot be
+        // imported is refused before anything is touched)
+        return match str_p(p, "path") {
+            Some(path) => {
+                read_lut(path)?;
+                s.edit_group(label, set)
+            }
+            None => set(s),
+        };
+    }
+    let r = lut_ref(s, p, cmd)?;
+    let (clip, idx) = lumetri_clip(s, p, cmd)?;
+    set_lumetri_param(s, clip, idx, param, ParamValue::Text(r.clone()), label)?;
+    Ok(json!({"clip": clip.0, "lut": r, "name": filmcraft_render::luts::label(Some(&s.project), &r)}))
+}
+
+/// The LUT reference a command sets: `path` imports the file into the library first; `lut` names a
+/// library or built-in LUT, which must exist; neither clears the slot.
+fn lut_ref(s: &mut Session, p: &Value, cmd: &str) -> Result<String> {
+    // (a `lut` of the wrong type is a mistake, not a request to clear the slot)
+    if p.get("lut").is_some_and(|v| !v.is_null() && !v.is_string()) {
+        return Err(bad(cmd, "`lut` must be \"lib:<id>\", \"builtin:<id>\" or \"\" (to clear)"));
+    }
+    if p.get("path").is_some_and(|v| !v.is_null() && !v.is_string()) {
+        return Err(bad(cmd, "`path` must be a file path"));
+    }
     let r = match (str_p(p, "path"), str_p(p, "lut")) {
         (Some(path), _) => {
             let path = path.to_string();
@@ -208,9 +262,32 @@ fn set_lut(s: &mut Session, p: &Value, param: &str) -> Result<Value> {
     if !r.is_empty() && filmcraft_render::luts::resolve(Some(&s.project), &r).is_none() {
         return Err(bad(cmd, format!("unknown LUT `{r}`")));
     }
-    let (clip, idx) = lumetri_clip(s, p, cmd)?;
-    set_lumetri_param(s, clip, idx, param, ParamValue::Text(r.clone()), if param == "input_lut" { "Input LUT" } else { "Creative Look" })?;
-    Ok(json!({"clip": clip.0, "lut": r, "name": filmcraft_render::luts::label(Some(&s.project), &r)}))
+    Ok(r)
+}
+
+/// The media item `item` names, for a Lumetri command (see [`crate::source_effects`]).
+fn source_media_p(s: &Session, p: &Value, cmd: &str) -> Result<ItemId> {
+    crate::source_effects::target_p(s, p, cmd)?.media().ok_or_else(|| bad(cmd, "need `item`"))
+}
+
+/// Set a Lumetri parameter among a media item's source clip effects, adding a Lumetri Color
+/// (after the others) when it has none: one undo step.
+fn set_source_lumetri_param(s: &mut Session, media: ItemId, param: &str, v: ParamValue, label: &str) -> Result<()> {
+    let param = param.to_string();
+    crate::source_effects::edit_effects(s, EffectTarget::Media(media), label, None, |it| {
+        let idx = match it.effects.iter().position(|e| e.effect == "lumetri") {
+            Some(i) => i,
+            None => {
+                let d = filmcraft_project::find_effect("lumetri").ok_or_else(|| bad("lumetri", "Lumetri Color is not available"))?;
+                it.effects.push(d.instance());
+                it.effects.len() - 1
+            }
+        };
+        let e = it.effects.get_mut(idx).ok_or_else(|| bad("lumetri", "no Lumetri"))?;
+        let prm = e.params.entry(param).or_insert_with(|| filmcraft_project::Param::new(v.clone()));
+        prm.value = v;
+        Ok(())
+    })
 }
 
 fn set_section(s: &mut Session, p: &Value) -> Result<Value> {
@@ -224,6 +301,20 @@ fn set_section(s: &mut Session, p: &Value) -> Result<Value> {
         "vignette" => "vignette_on",
         o => return Err(bad("lumetri.setSection", format!("unknown section `{o}`"))),
     };
+    if names_item(p) {
+        let media = source_media_p(s, p, "lumetri.setSection")?;
+        let cur = s
+            .project
+            .source_effects_of(media)
+            .iter()
+            .find(|e| e.effect == "lumetri")
+            .and_then(|e| e.param(param))
+            .and_then(|v| v.value.as_bool())
+            .unwrap_or(param != "hsl_on");
+        let v = bool_p(p, "on").unwrap_or(!cur);
+        set_source_lumetri_param(s, media, param, ParamValue::Bool(v), "Lumetri Section")?;
+        return Ok(json!({"item": media.0, "param": param, "on": v}));
+    }
     let (clip, idx) = lumetri_clip(s, p, "lumetri.setSection")?;
     let cur = s
         .active_sequence()
@@ -394,6 +485,17 @@ fn apply_preset(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "lumetri.applyPreset";
     let name = str_p(p, "name").ok_or_else(|| bad(cmd, "need `name`"))?;
     let preset = filmcraft_render::lumetri_presets::find(name).ok_or_else(|| bad(cmd, format!("no Lumetri preset `{name}`")))?;
+    if let Some(items) = crate::source_effects::items_p(s, p, cmd)? {
+        let inst = preset.instance();
+        s.edit(&format!("Apply {}", preset.name), |pr, _| {
+            for m in &items {
+                let Some(ItemKind::Media(c)) = pr.item_mut(*m).map(|i| &mut i.kind) else { return Err(bad(cmd, "the item is not media")) };
+                c.source_effects.push(inst.clone());
+            }
+            Ok(())
+        })?;
+        return Ok(json!({"preset": preset.name, "items": items.iter().map(|i| i.0).collect::<Vec<_>>()}));
+    }
     let clips = crate::commands::clips_p(s, p);
     if clips.is_empty() {
         return Err(bad(cmd, "select clips first"));
@@ -439,6 +541,9 @@ fn preset_thumbnails(_: &mut Session, p: &Value) -> Result<Value> {
 /// clip at the playhead to the sequence frame at the reference time. Sets the three wheels, their
 /// lightness and Basic saturation in one undo step.
 fn apply_match(s: &mut Session, p: &Value) -> Result<Value> {
+    if names_item(p) {
+        return Err(bad("lumetri.applyMatch", "unsupported for source clips: Apply Match matches a timeline clip to a frame of the sequence"));
+    }
     let (clip, idx) = lumetri_clip(s, p, "lumetri.applyMatch")?;
     let seq_id = s.state.active_sequence.ok_or_else(|| bad("lumetri.applyMatch", "no active sequence"))?;
     let reference_t = time_p(s, p, "reference").ok_or_else(|| bad("lumetri.applyMatch", "need `referenceTime`, `referenceFrame` or `referenceTimecode`"))?;

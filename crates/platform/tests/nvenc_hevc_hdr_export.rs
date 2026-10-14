@@ -46,6 +46,7 @@ fn project(working: WorkingSpace) -> (Arc<Project>, filmcraft_project::ItemId, S
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         }),
         None,
     );

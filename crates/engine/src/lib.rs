@@ -50,6 +50,7 @@ pub mod sequence_tools;
 pub mod settings;
 pub mod shortcut_presets;
 pub mod shortcuts;
+mod source_effects;
 pub mod source_monitor;
 pub mod sync;
 pub mod transcript;
@@ -1303,6 +1304,8 @@ mod sequence_tools_tests;
 mod settings_tests;
 #[cfg(test)]
 mod shortcuts_tests;
+#[cfg(test)]
+mod source_effects_tests;
 #[cfg(test)]
 mod split_edit_ripple_trim_tests;
 #[cfg(test)]

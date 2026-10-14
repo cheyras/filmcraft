@@ -205,6 +205,9 @@ export CARGO_TARGET_DIR=target/agent-hevc     # separate build dir, no lock figh
    evaluation in `FxOp::eval`, the CPU reference in `FxOp::apply`, the id in `GPU_EFFECTS`), add
    its passes to `crates/gpu/src/fx.rs` and its math to `fx.wgsl`, and a parity case to
    `crates/gpu/src/fx_tests.rs`.
+5. Every video effect can also be a source clip effect (an effect on the media, ahead of the clips'
+   own: `MediaClip::source_effects`) unless it reads other frames or tracks, or depends on the
+   clip's place in a sequence. Add such an effect to `render::effects::source_effect_refusal`.
 
 Audio effects implement `AudioEffect` in `crates/audio-dsp` and register in its `effects()`
 registry. Then add an `audio(…)` definition in `effect.rs` and a `Mapping` from project parameters

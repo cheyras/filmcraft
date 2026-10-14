@@ -241,6 +241,7 @@ mod tests {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         };
         p.add_item(name, Label::Iris, ItemKind::Media(clip), None)
     }

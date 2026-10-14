@@ -5,7 +5,7 @@
 //! (so ½/¼ playback resolution renders the same look). Colour-grading math runs on display-encoded
 //! straight colour where artists expect it (contrast, levels, posterize), linear light elsewhere.
 
-use filmcraft_color::{GradeSpace, hsl_to_rgb, linear_to_srgb, luma709, rgb_to_hsl, srgb_to_linear};
+use filmcraft_color::{GradeSpace, Lut, hsl_to_rgb, linear_to_srgb, luma709, rgb_to_hsl, srgb_to_linear};
 use filmcraft_geom::{Affine, Vec2};
 use filmcraft_project::{EffectInstance, ParamValue};
 use filmcraft_time::Tick;
@@ -620,6 +620,43 @@ fn within_unit(v: [f32; 3], hdr: bool, f: impl Fn([f32; 3]) -> [f32; 3]) -> [f32
     o.map(|q| q * m)
 }
 
+/// Why effect `id` cannot be a source clip effect (master clip effect), or `None` when it can.
+///
+/// A source effect runs on the media's picture ahead of every timeline clip's own effects,
+/// wherever the media is used, so it must depend on nothing but that picture and its media time:
+/// not the fixed effects (Motion, Opacity, Time Remapping), not audio effects, transitions or
+/// graphic layers, not effects that read other frames (they would pull neighbouring frames of the
+/// same media through the chain again), other tracks, or the clip's place in a sequence.
+pub fn source_effect_refusal(id: &str) -> Option<&'static str> {
+    let Some(def) = filmcraft_project::find_effect(id) else { return Some("unknown effect") };
+    if def.intrinsic {
+        return Some("Motion, Opacity and Time Remapping belong to the timeline clip");
+    }
+    if def.kind != filmcraft_project::EffectKind::Video {
+        return Some("only video effects can be source clip effects");
+    }
+    if filmcraft_project::graphic::is_layer_id(id) {
+        return Some("graphic layers are not source clip effects");
+    }
+    if crate::vfx::is_temporal(id) {
+        return Some("effects that read other frames cannot be source clip effects");
+    }
+    if matches!(id, "track_matte" | "compound_blur" | "gradient_wipe_legacy") {
+        return Some("effects that read other tracks cannot be source clip effects");
+    }
+    if matches!(id, "timecode" | "clip_name" | "metadata_burnin" | "grow" | "shrink" | "move" | "spin") {
+        return Some("effects that depend on the clip's place in a sequence cannot be source clip effects");
+    }
+    None
+}
+
+/// Lumetri's Input LUT on one straight-alpha linear pixel: encode to the grading signal, run the
+/// LUT on 0…1 (HDR highlights above HDR White scaled through it), decode back.
+#[inline]
+fn input_lut_pixel(lut: &Lut, gs: &GradeSpace, hdr: bool, c: [f32; 3]) -> [f32; 3] {
+    gs.decode(within_unit(gs.encode(c), hdr, |v| lut.apply(v)))
+}
+
 fn lumetri(img: &mut Image, e: &EffectInstance, cx: &FxCtx) {
     let (basic_on, creative_on, vignette_on) = (on(e, "basic_on"), on(e, "creative_on"), on(e, "vignette_on"));
     let input_lut = if basic_on { crate::luts::resolve(cx.project, text(e, "input_lut")) } else { None };
@@ -651,7 +688,7 @@ fn lumetri(img: &mut Image, e: &EffectInstance, cx: &FxCtx) {
     let aspect = w / h;
     img.map_rgb(|c, x, y| {
         let c = match &input_lut {
-            Some(l) => gs.decode(within_unit(gs.encode(c), hdr, |v| l.apply(v))),
+            Some(l) => input_lut_pixel(l, &gs, hdr, c),
             None => c,
         };
         // white balance + exposure in linear light

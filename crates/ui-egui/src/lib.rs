@@ -1231,6 +1231,16 @@ impl FilmcraftApp {
                 let mut h = std::collections::hash_map::DefaultHasher::new();
                 filmcraft_engine::media_pool::media_key(m).hash(&mut h);
                 (m.proxy.is_some() && self.session.media.use_proxies()).hash(&mut h);
+                // what the picture is shown through: Interpret Footage and the source clip effects
+                // (with the content of the library LUTs they name)
+                serde_json::to_string(&(&m.interpret, &m.source_effects)).unwrap_or_default().hash(&mut h);
+                for e in &m.source_effects {
+                    for id in ["input_lut", "look_lut"] {
+                        if let Some(filmcraft_project::ParamValue::Text(spec)) = e.param(id).map(|p| &p.value) {
+                            filmcraft_render::luts::content_key(Some(&self.session.project), spec).hash(&mut h);
+                        }
+                    }
+                }
                 h.finish()
             }
             _ => self.session.revision,

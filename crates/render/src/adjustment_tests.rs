@@ -32,6 +32,7 @@ fn media(p: &mut Project, map: &mut SourceMap, g: GeneratorSource) -> ItemId {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         }),
         None,
     );

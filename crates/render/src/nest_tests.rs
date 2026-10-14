@@ -35,6 +35,7 @@ impl Rig {
                 offline: false,
                 proxy: None,
                 identity: None,
+                source_effects: Vec::new(),
             }),
             None,
         );

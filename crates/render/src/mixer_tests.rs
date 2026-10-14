@@ -76,6 +76,7 @@ fn audio_clips_from_one_container_mix_distinct_streams() {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         }),
         None,
     );
@@ -676,6 +677,7 @@ fn nested_tone(inner_rate: u32) -> (Project, ItemId, SourceMap, Arc<Tone>) {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         }),
         None,
     );

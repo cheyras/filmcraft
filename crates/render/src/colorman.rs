@@ -144,6 +144,7 @@ mod tests {
                 offline: false,
                 proxy: None,
                 identity: None,
+                source_effects: Vec::new(),
             };
             let id = p.add_item("hdr", Label::Iris, ItemKind::Media(clip), None);
             (p, id)
