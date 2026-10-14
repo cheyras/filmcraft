@@ -241,6 +241,7 @@ fn tracking_session() -> (Session, ClipId) {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         }),
         None,
     );

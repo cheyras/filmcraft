@@ -39,7 +39,7 @@ use std::sync::Arc;
 use filmcraft_frame::{PixelData, VideoFrame, pool};
 use filmcraft_geom::{Affine, Vec2};
 use filmcraft_media::{FrameRequest, SharedSource};
-use filmcraft_project::{ItemId, ItemKind, ParamValue, Project, Sequence, TrackItem};
+use filmcraft_project::{EffectInstance, ItemId, ItemKind, ParamValue, Project, Sequence, TrackItem};
 use filmcraft_time::{Tick, TimeDisplay, format_time};
 
 pub use blend::Blend;
@@ -482,7 +482,7 @@ pub(crate) fn item_layer_ex(
     }
     // plain media: nothing but the frame itself reaches the output
     let plain_media = matches!(pi.kind, ItemKind::Media(_) | ItemKind::Subclip { .. })
-        && !(opts.effects && item.has_standard_effects())
+        && !(opts.effects && has_clip_effects(project, item))
         && !item.effect("opacity").is_some_and(|e| e.enabled && !e.masks.is_empty());
     let mut fetched = None;
     if allow_region && plain_media {
@@ -521,7 +521,7 @@ pub(crate) fn item_layer_ex(
             frame_rate: seq.settings.frame_rate.as_f64(),
             working: seq.settings.color.working,
         };
-        for e in item.effects.iter().filter(|e| e.def().is_some_and(|d| !d.intrinsic) && !filmcraft_project::graphic::is_layer(e)) {
+        for e in clip_effects(project, item) {
             if filmcraft_media::cancel::cancelled() {
                 return None;
             }
@@ -557,6 +557,28 @@ fn media_frame(item: &TrackItem, t: Tick, sources: &dyn SourceProvider, want: f3
     let frame = src.video_frame(FrameRequest { time: video_source_time(item, t, src.info().frame_rate()), scale: want }).ok()?;
     let n = decimation(frame.width as f32, src_size.0 as f32 * want);
     Some((src, frame, n))
+}
+
+/// The source clip effects (master clip effects) of what `item` shows, as they render: enabled or
+/// not, standard video effects only. The renderer skips any that [`effects::source_effect_refusal`]
+/// refuses, whatever a damaged or hand-edited project holds.
+pub(crate) fn source_clip_effects(project: &Project, item: ItemId) -> impl Iterator<Item = &EffectInstance> {
+    project.source_effects_of(item).iter().filter(|e| e.def().is_some_and(|d| !d.intrinsic) && effects::source_effect_refusal(&e.effect).is_none())
+}
+
+/// The standard video effects of a timeline clip in render order: the media's source clip effects
+/// first, then the clip's own. Every place that walks a clip's effects walks this chain, so a
+/// source effect renders exactly as the same effect on the clip, ahead of the clip's own (and of
+/// Motion, Opacity and the other fixed effects, which follow the chain).
+pub(crate) fn clip_effects<'a>(project: &'a Project, item: &'a TrackItem) -> impl Iterator<Item = &'a EffectInstance> {
+    source_clip_effects(project, item.item)
+        .chain(item.effects.iter().filter(|e| e.def().is_some_and(|d| !d.intrinsic) && !filmcraft_project::graphic::is_layer(e)))
+}
+
+/// Whether [`clip_effects`] has anything to run (a clip with none can take the plain-media
+/// shortcuts).
+pub(crate) fn has_clip_effects(project: &Project, item: &TrackItem) -> bool {
+    clip_effects(project, item).next().is_some()
 }
 
 /// The media time to ask a source for the video frame a clip shows at timeline `t`. A reversed
@@ -698,8 +720,29 @@ pub fn render_item(project: &Project, item: ItemId, t: Tick, scale: f32, sources
             let f = src.video_frame(FrameRequest { time: t, scale }).ok()?;
             let full_w = src.info().video.as_ref().map_or(f.width, |v| v.width) as f32;
             let n = decimation(f.width as f32, full_w * scale);
-            // the Source monitor shows media as SDR Rec. 709 (log/HDR tone mapped per its colour space)
-            Some(colorman::decode(project, item, &f, n, &filmcraft_color::ColorPipeline::REC709))
+            // the Source monitor shows media as SDR Rec. 709 (log/HDR tone mapped per its colour
+            // space), through the media's source clip effects as every clip of it is
+            let pipe = filmcraft_color::ColorPipeline::REC709;
+            let mut img = colorman::decode(project, item, &f, n, &pipe);
+            let fx: Vec<&EffectInstance> = source_clip_effects(project, item).collect();
+            if !fx.is_empty() {
+                let name = project.item(item).map(|p| p.name.as_str()).unwrap_or("");
+                let cx = effects::FxCtx {
+                    t,
+                    px_scale: img.w as f32 / full_w.max(1.0),
+                    seconds: t.seconds(),
+                    timecode: "",
+                    clip_name: name,
+                    project: Some(project),
+                    env: None,
+                    frame_rate: src.info().frame_rate().as_f64(),
+                    working: pipe.working,
+                };
+                for e in fx {
+                    mask::apply_effect(&mut img, e, &cx);
+                }
+            }
+            Some(img)
         }
     }
 }
@@ -746,3 +789,6 @@ mod region_tests;
 #[cfg(test)]
 #[path = "par_tests.rs"]
 mod par_tests;
+
+#[cfg(test)]
+mod source_effects_tests;

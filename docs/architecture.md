@@ -128,6 +128,7 @@ Project
 ├─ root: Bin                         tree of bins
 ├─ items: map ItemId → ProjectItem   flat
 │    kind: Media(MediaClip) | Sequence(Sequence) | Subclip{..} | AdjustmentLayer{..} | Graphic{..}
+     (MediaClip: interpret, proxy, source_effects: the media's own effect list, below)
 └─ next_id
 
 Sequence
@@ -145,6 +146,12 @@ TrackItem (a clip instance)
 ├─ item: ItemId, start (timeline ticks), source_in (media ticks), duration, speed
 ├─ link group, label, enabled
 └─ effects: Vec<EffectInstance>      intrinsic Motion/Opacity/Volume… first, then standard effects
+MediaClip.source_effects (Premiere: master clip effects) renders first, before every TrackItem's own
+effects, wherever the media is used (subclips share it): `render::clip_effects` is the one chain
+(source effects, then the clip's) that the CPU renderer, the GPU plan, the effect environment of
+temporal effects and the render-bar cost walk, so a source effect is exactly the same effect on the
+clip. `render_item` (Source Monitor, bin thumbnails) applies it to the shown frame at its media time.
+Commands take `item` beside `clip` (`engine::source_effects`).
 EffectInstance
 ├─ effect id, enabled, params: id → constant value or keyframe track
 └─ masks: Vec<Mask>                  path (keyframable Bézier), feather, opacity, expansion, inverted, mode

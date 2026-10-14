@@ -29,6 +29,7 @@ fn project() -> (Arc<Project>, ItemId, SourceMap) {
         offline: false,
         proxy: None,
         identity: None,
+        source_effects: Vec::new(),
     };
     let red = p.add_item(&info.name, Label::Iris, ItemKind::Media(clip), None);
     let seq = p.new_sequence("s", SequenceSettings { width: 320, height: 180, frame_rate: rate, ..Default::default() }, 1, 1, None);

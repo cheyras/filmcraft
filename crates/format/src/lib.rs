@@ -39,6 +39,8 @@
 //!   would drop them when saving.
 //! - **v15**: project notes (`Project::notes`, Window ▸ Project Notes). No-op step; older builds
 //!   would drop them when saving.
+//! - **v16**: source clip effects (`MediaClip::source_effects`, Premiere's master clip effects).
+//!   No-op step; older builds would drop them when saving.
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable))]
 
@@ -59,8 +61,10 @@ pub type Migration = fn(Value) -> Result<Value, String>;
 
 /// `MIGRATIONS[i]` upgrades schema `i + 1` to `i + 2`. Append one function per schema bump; never
 /// edit a shipped one.
-pub const MIGRATIONS: &[Migration] =
-    &[v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10, v10_to_v11, v11_to_v12, v12_to_v13, v13_to_v14, v14_to_v15];
+pub const MIGRATIONS: &[Migration] = &[
+    v1_to_v2, v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, v6_to_v7, v7_to_v8, v8_to_v9, v9_to_v10, v10_to_v11, v11_to_v12, v12_to_v13, v13_to_v14, v14_to_v15,
+    v15_to_v16,
+];
 
 /// The schema version this build writes (and the newest it reads).
 pub const SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32 + 1;
@@ -361,13 +365,85 @@ fn v14_to_v15(doc: Value) -> Result<Value, String> {
     Ok(doc)
 }
 
+/// v15 → v16: source clip effects on media. Existing data needs no change (a media item without
+/// `source_effects` has none).
+fn v15_to_v16(doc: Value) -> Result<Value, String> {
+    Ok(doc)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn schema_version_matches_table() {
-        assert_eq!(SCHEMA_VERSION, 15);
+        assert_eq!(SCHEMA_VERSION, 16);
+    }
+
+    /// A project with one media item carrying `effects` as its source clip effects.
+    fn project_with_media(effects: Vec<filmcraft_project::EffectInstance>) -> (Project, filmcraft_project::ItemId) {
+        use filmcraft_media::MediaSource;
+        use filmcraft_project::{ItemKind, Label, MediaClip, MediaRef};
+        let mut p = Project::new("Source effects");
+        let g = filmcraft_media::Generator::BlackVideo;
+        let info = filmcraft_media::generators::GeneratorSource::new(g.clone(), 2, 2, Default::default(), filmcraft_time::Tick(1)).info().clone();
+        let clip = MediaClip {
+            media: MediaRef::Generator(g),
+            info,
+            interpret: Default::default(),
+            mark_in: None,
+            mark_out: None,
+            markers: vec![],
+            offline: false,
+            proxy: None,
+            identity: None,
+            source_effects: effects,
+        };
+        let id = p.add_item("Log footage", Label::Iris, ItemKind::Media(clip), None);
+        (p, id)
+    }
+
+    /// A Lumetri Color with a library Input LUT and one keyframed parameter, as a source effect.
+    fn graded_lumetri() -> filmcraft_project::EffectInstance {
+        use filmcraft_project::{ParamValue, find_effect};
+        let mut e = find_effect("lumetri").unwrap().instance();
+        e.params.get_mut("input_lut").unwrap().value = ParamValue::Text("lib:lut7".into());
+        let exposure = e.params.get_mut("exposure").unwrap();
+        exposure.put_keyframe(filmcraft_time::Tick(254_016_000_000), ParamValue::Float(0.5));
+        e
+    }
+
+    /// v16 added `MediaClip::source_effects`. A v15 document (no such field) upgrades through the
+    /// no-op step and loads with none; a media item with source effects round-trips with its
+    /// keyframes and LUT references, and the field is written only when there are any.
+    #[test]
+    fn v15_upgrades_and_source_effects_round_trip() {
+        assert_eq!(MIGRATIONS.len() + 1, 16, "v15_to_v16 is the last step");
+        for effects in [vec![], vec![graded_lumetri()], vec![graded_lumetri(), filmcraft_project::find_effect("gaussian_blur").unwrap().instance()]] {
+            let (p, id) = project_with_media(effects.clone());
+            for pretty in [true, false] {
+                let bytes = encode(&p, pretty);
+                let text = String::from_utf8(bytes.clone()).unwrap();
+                assert_eq!(text.contains("source_effects"), !effects.is_empty(), "only a media item with source effects writes the field");
+                let back = decode(&bytes).unwrap();
+                assert_eq!(back.project, p);
+                assert_eq!(back.project.source_effects_of(id), effects.as_slice());
+                assert!(!back.migrated());
+            }
+        }
+        // a v15 file: the same document stamped schema 15, which never had the field
+        let (p, id) = project_with_media(vec![]);
+        let mut doc: Value = serde_json::from_slice(&encode(&p, false)).unwrap();
+        doc["schema_version"] = Value::from(15);
+        let old = decode(&serde_json::to_vec(&doc).unwrap()).unwrap();
+        assert!(old.migrated());
+        assert_eq!((old.schema_version, old.project.source_effects_of(id).len()), (15, 0));
+        assert_eq!(old.project, p);
+        // resaved, it is in the current schema, and the effects added afterwards survive the next load
+        let again = decode(&encode(&old.project, false)).unwrap();
+        assert!(!again.migrated() && again.schema_version == SCHEMA_VERSION);
+        let (with_fx, _) = project_with_media(vec![graded_lumetri()]);
+        assert_eq!(decode(&encode(&with_fx, false)).unwrap().project, with_fx);
     }
 
     #[test]

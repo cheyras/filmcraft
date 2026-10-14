@@ -221,6 +221,11 @@ pub struct MediaClip {
     /// checks a candidate against it. None for generators and projects from older builds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity: Option<MediaIdentity>,
+    /// Source clip effects (Premiere: master clip effects). Rendered before every timeline clip's
+    /// own effects, wherever this media is used (subclips share them). Standard video effects
+    /// only; Motion, Opacity and the other fixed effects belong to the timeline clip.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_effects: Vec<EffectInstance>,
 }
 
 /// What a media file looked like when it was linked: its size plus a fast content fingerprint
@@ -1700,6 +1705,12 @@ impl Project {
         None
     }
 
+    /// The source clip effects (master clip effects) of what `item` shows, following subclips to
+    /// their media. Empty for anything that is not media or a subclip of media.
+    pub fn source_effects_of(&self, item: ItemId) -> &[EffectInstance] {
+        self.resolve_media(item).map_or(&[], |(_, media, _)| media.source_effects.as_slice())
+    }
+
     /// Size in pixels of what an item shows: a media clip's picture, a sequence's frame, an
     /// adjustment layer or graphic; a subclip has the size of its parent. `None` without
     /// picture. This is the size the renderer centres a clip's "auto" anchor in.
@@ -1823,6 +1834,7 @@ mod tests {
                 offline: false,
                 proxy: None,
                 identity: None,
+                source_effects: Vec::new(),
             }),
             None,
         );

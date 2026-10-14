@@ -143,13 +143,57 @@ the result's `sourceInClamped: [ids]` (present with `keepSourceIn`) names the cl
 rec2100-hlg, wideGamut, autoToneMap}`, `clip.interpretFootage {items?, colorSpace?: auto|<id>, pixelAspect?: [num, den]|file}`,
 `color.spaces`, `media.colorInfo {item}`; LUTs: `lut.import {path, name?}`, `lut.list`,
 `lut.remove {id}`, `lut.export {lut, path, format?}`, `lumetri.setInputLut` / `lumetri.setLook
-{clip?, lut: lib:<id>|builtin:<id>|"", path?}`, `lumetri.setSection {clip?, section, on?}`,
+{clip?|item?, lut: lib:<id>|builtin:<id>|"", path?}`, `lumetri.setSection {clip?|item?, section, on?}`,
 `lumetri.applyMatch {clip?, referenceTime|referenceFrame|referenceTimecode, faceDetection?}`. Without
 params the menu entries open dialogs (ids `colorDialog.space.<id>`, `colorDialog.working.<id>`,
 `colorDialog.wideGamut`, `colorDialog.autoToneMap`, `colorDialog.ok|cancel`). Lumetri panel ids:
 `lumetri.input_lut`, `lumetri.look_lut`, `lumetri.switch.<section>`, `lumetri.section.<section>`,
 `lumetri.match.*`; HDR scopes: `scopes.hdrWaveform`. `file.exportMedia {sdr: true}` exports an HDR
 sequence as tone-mapped SDR.
+
+**Source clip effects** (Premiere's master clip effects; `crates/engine/src/source_effects.rs`). A media
+item carries its own effect list (`MediaClip::source_effects`). It renders first, before the
+clip's own effects and before Motion, Opacity and the other fixed effects, wherever the footage is
+used: the program and exports, render previews, nests and multicam clips, subclips (they share their
+media's list), the Source Monitor and bin thumbnails. It is the same chain the clip's effects are
+(`filmcraft_render::clip_effects`), so an effect renders the same on the media as on a clip, on
+the CPU and on the GPU (a source Lumetri without an input LUT runs on the GPU exactly as a clip
+Lumetri does). Like clip effects, it is off with Toggle Effects. Keyframes are in media time.
+
+Every effect command that takes a timeline clip by `clip` also takes a project item by `item`,
+a media item or a subclip of one (resolved to its media). Passing `clip` and `item` together is an error,
+and so is an item that is not media (a sequence, a bin, a graphic), media without a picture, a
+missing item or a value that is not an item id. Each is one undoable edit named as the clip command is.
+Commands: `effects.apply {item|items, effect}` (appended to the list; `items` is a non-empty list of
+ids, and ids that name the same media count once), `effects.remove {item, index}`,
+`effects.toggleEnabled {item, index}`, `effects.setParam {item, effect: index|id, param, value, time?,
+keyframe?, merge?}`, `effects.toggleAnimation`, `effects.reset {item, index}`, `effects.resetParam`,
+`effects.addKeyframe`, `effects.deleteKeyframe`, `effects.moveKeyframe`, `effects.setKeyframe`,
+`effects.setInterpolation` (all with `item` and times in **media ticks**; a command with no `time`
+works at the Source Monitor's playhead when the item is open there, else at media time 0), and the Lumetri commands `lumetri.setInputLut {item, lut|path}`, `lumetri.setLook`,
+`lumetri.setSection {item, section, on?}` (these add a Lumetri Color to the list when it has none,
+in the same undo step) and `lumetri.applyPreset {item|items, name}`. `lumetri.applyMatch` refuses `item`
+("unsupported for source clips"). `effects.moveKeyframes` and the mask commands are timeline-clip only.
+Read the list with `effects.list {item}` (`{item, effects: [{index, effect, name, enabled, masks,
+allowed, params: {id: {value, keyframes: [mediaTicks]}}}]}`; without `item`, `effects.list` is the
+catalogue of effects as before). `sequence.inspect` clips carry `sourceEffects` (the count of their
+media's list), and `project.inspect` items too.
+
+Not every effect can be a source effect; `effects.apply` refuses the rest with the reason
+(`filmcraft_render::effects::source_effect_refusal`, which the renderer also applies, skipping any such
+effect a damaged project holds): the fixed effects (Motion, Opacity, Time Remapping), audio effects,
+transitions, graphic layers, effects that read other frames (Posterize Time, Echo, Warp Stabilizer, Auto
+Reframe: they would pull neighbouring frames of the media through the chain again), effects that read other
+tracks (Track Matte Key, Compound Blur, Gradient Wipe) and effects that depend on the clip's place in a
+sequence (Timecode, Clip Name, Metadata Burn-in, Grow, Shrink, Move, Spin). A clip's own temporal
+effect (Echo on the clip) sees the source effects on the frames it reads.
+
+*Known limitation:* Create Proxies renders the media through the whole pipeline with its source clip
+effects (and its Interpret Footage settings), so the proxy file has them baked in, and playback with
+proxies on then applies them again to the proxy frames. The same happens to the colour-space override.
+The ignored test `a_proxy_shows_the_picture_of_the_full_resolution_media` shows it (4.8 dB against
+the full-resolution picture). Until proxies are transcoded without them, turn proxies off for
+media with source effects.
 
 **Keyboard shortcuts** (`crates/engine/src/shortcuts.rs`): `shortcuts.list {query?, panel?}`,
 `shortcuts.get`, `shortcuts.set {command, keys, panel?, add?, keepConflicts?}`, `shortcuts.clear`,

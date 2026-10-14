@@ -24,6 +24,7 @@ pub(crate) fn project() -> (Arc<Project>, ItemId, SourceMap) {
                 offline: false,
                 proxy: None,
                 identity: None,
+                source_effects: Vec::new(),
             }),
             None,
         )
@@ -240,6 +241,7 @@ fn caption_burn_in_h264_ffmpeg_oracle() {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         }),
         None,
     );
@@ -410,6 +412,7 @@ fn gpu_hook_scenarios() {
                 offline: false,
                 proxy: None,
                 identity: None,
+                source_effects: Vec::new(),
             }),
             None,
         );

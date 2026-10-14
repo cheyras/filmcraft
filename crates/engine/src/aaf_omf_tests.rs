@@ -408,6 +408,7 @@ mod selected_streams {
                 offline: false,
                 proxy: None,
                 identity: None,
+                source_effects: Vec::new(),
             }),
             None,
         );

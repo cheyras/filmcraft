@@ -23,6 +23,7 @@ fn setup() -> (Project, ItemId, ItemId, ItemId, SourceMap) {
                 offline: false,
                 proxy: None,
                 identity: None,
+                source_effects: Vec::new(),
             }),
             None,
         );
@@ -113,6 +114,7 @@ fn cross_dissolve_midpoint() {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         }),
         None,
     );
@@ -165,6 +167,7 @@ fn audio_mix_bars_tone() {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         }),
         None,
     );
@@ -294,6 +297,7 @@ fn tone_with(effects: &[(&str, &[(&str, f64)])]) -> (Project, ItemId, SourceMap)
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         }),
         None,
     );
@@ -483,6 +487,7 @@ fn a_reversed_clip_shows_exactly_its_source_range() {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         }),
         None,
     );

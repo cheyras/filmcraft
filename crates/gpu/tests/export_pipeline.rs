@@ -51,6 +51,7 @@ fn project(width: u32, height: u32) -> (Arc<filmcraft_project::Project>, filmcra
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         }),
         None,
     );

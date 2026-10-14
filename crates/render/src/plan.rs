@@ -168,8 +168,11 @@ fn simple_transition(id: &str) -> bool {
 
 /// The standard effects of a media clip if the GPU can draw it (any blend mode, no opacity masks,
 /// every enabled standard effect unmasked and with a GPU implementation; empty without effects or
-/// with effects off). None: the clip is rendered on the CPU.
-fn gpu_chain<'a>(project: &Project, item: &'a TrackItem, opts: RenderOptions) -> Option<Vec<&'a filmcraft_project::EffectInstance>> {
+/// with effects off). The chain is the media's source clip effects followed by the clip's own
+/// ([`crate::clip_effects`]), so a source effect runs on the GPU exactly when the same effect on
+/// the clip would, and is gated the same way (a Lumetri input LUT goes to the CPU). None: the clip
+/// is rendered on the CPU.
+fn gpu_chain<'a>(project: &'a Project, item: &'a TrackItem, opts: RenderOptions) -> Option<Vec<&'a filmcraft_project::EffectInstance>> {
     let is_media = project.item(item.item).is_some_and(|p| matches!(p.kind, ItemKind::Media(_) | ItemKind::Subclip { .. }));
     if !is_media || item.has_opacity_masks() {
         return None;
@@ -178,7 +181,7 @@ fn gpu_chain<'a>(project: &Project, item: &'a TrackItem, opts: RenderOptions) ->
         return Some(Vec::new());
     }
     let mut chain = Vec::new();
-    for e in item.effects.iter().filter(|e| e.def().is_some_and(|d| !d.intrinsic) && !filmcraft_project::graphic::is_layer(e)) {
+    for e in crate::clip_effects(project, item) {
         if !e.enabled {
             continue;
         }

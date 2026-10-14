@@ -31,6 +31,7 @@ pub fn add_generator(p: &mut Project, pool: &MediaPool, src: GeneratorSource, na
         offline: false,
         proxy: None,
         identity: None,
+        source_effects: Vec::new(),
     };
     let key = crate::media_pool::media_key(&clip);
     let id = p.add_item(name, label, ItemKind::Media(clip), bin);

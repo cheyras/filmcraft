@@ -715,6 +715,7 @@ fn import_source(
                 offline: false,
                 proxy: None,
                 identity: Some(identity),
+                source_effects: Vec::new(),
             }),
             bin,
         ))
@@ -2921,78 +2922,106 @@ fn build() -> Vec<CommandSpec> {
             Ok(Value::Null)
         }),
         // ================= Effects =================
-        cmd!("effects.apply", "Apply Effect", [], None, r#"{"clips":[id]?,"effect":"gaussian_blur|Gaussian Blur|…"}"#, has_seq, |s, p| {
-            let name = str_p(p, "effect").ok_or_else(|| bad("effects.apply", "need `effect`"))?;
-            let def = resolve_effect_name(s, p, name).ok_or_else(|| bad("effects.apply", format!("unknown effect `{name}`")))?;
-            if filmcraft_project::graphic::is_layer_id(def.id) {
-                return Err(bad("effects.apply", "graphic layers are added with graphics.newText / graphics.newShape"));
-            }
-            if matches!(def.kind, filmcraft_project::EffectKind::VideoTransition | filmcraft_project::EffectKind::AudioTransition) {
-                let mut q = p.clone();
-                q["effect"] = json!(def.id);
-                return apply_transition(s, &q, if def.kind == filmcraft_project::EffectKind::VideoTransition { TrackKind::Video } else { TrackKind::Audio });
-            }
-            let clips = clips_p(s, p);
-            if clips.is_empty() {
-                return Err(bad("effects.apply", "select clips first"));
-            }
-            let is_audio = def.kind == filmcraft_project::EffectKind::Audio;
-            // Audio effects belong on audio clips. A video clip in an A/V pair is retargeted to
-            // its linked audio so double-click / drop on the picture still applies Parametric EQ.
-            let clips = if is_audio { audio_effect_targets(s, &clips) } else { clips };
-            if clips.is_empty() {
-                return Err(bad("effects.apply", "audio effects need an audio clip (or a video clip with linked audio)"));
-            }
-            let (fw, fh) = s.active_sequence().map(|q| (q.settings.width, q.settings.height)).unwrap_or((1920, 1080));
-            let label = format!("Apply {}", def.name);
-            s.edit_sequence(&label, |q, _, _| {
-                let mut n = 0;
-                for t in q.all_tracks_mut() {
-                    if (t.kind == TrackKind::Audio) != is_audio {
-                        continue;
+        cmd!(
+            "effects.apply",
+            "Apply Effect",
+            [],
+            None,
+            r#"{"clips":[id]?,"item":id?,"items":[id]? (project items, media or subclips of media: the effect becomes a source clip effect, rendered ahead of the clips' own),"effect":"gaussian_blur|Gaussian Blur|…"}"#,
+            always,
+            |s, p| {
+                let name = str_p(p, "effect").ok_or_else(|| bad("effects.apply", "need `effect`"))?;
+                if let Some(items) = crate::source_effects::items_p(s, p, "effects.apply")? {
+                    // (a name shared by video and audio effects means the video one)
+                    let def = resolve_effect_name(s, &json!({"clips": []}), name).ok_or_else(|| bad("effects.apply", format!("unknown effect `{name}`")))?;
+                    return crate::source_effects::apply(s, &items, def);
+                }
+                let def = resolve_effect_name(s, p, name).ok_or_else(|| bad("effects.apply", format!("unknown effect `{name}`")))?;
+                if filmcraft_project::graphic::is_layer_id(def.id) {
+                    return Err(bad("effects.apply", "graphic layers are added with graphics.newText / graphics.newShape"));
+                }
+                if matches!(def.kind, filmcraft_project::EffectKind::VideoTransition | filmcraft_project::EffectKind::AudioTransition) {
+                    let mut q = p.clone();
+                    q["effect"] = json!(def.id);
+                    return apply_transition(
+                        s,
+                        &q,
+                        if def.kind == filmcraft_project::EffectKind::VideoTransition { TrackKind::Video } else { TrackKind::Audio },
+                    );
+                }
+                let clips = clips_p(s, p);
+                if clips.is_empty() {
+                    return Err(bad("effects.apply", "select clips first"));
+                }
+                let is_audio = def.kind == filmcraft_project::EffectKind::Audio;
+                // Audio effects belong on audio clips. A video clip in an A/V pair is retargeted to
+                // its linked audio so double-click / drop on the picture still applies Parametric EQ.
+                let clips = if is_audio { audio_effect_targets(s, &clips) } else { clips };
+                if clips.is_empty() {
+                    return Err(bad("effects.apply", "audio effects need an audio clip (or a video clip with linked audio)"));
+                }
+                let (fw, fh) = s.active_sequence().map(|q| (q.settings.width, q.settings.height)).unwrap_or((1920, 1080));
+                let label = format!("Apply {}", def.name);
+                s.edit_sequence(&label, |q, _, _| {
+                    let mut n = 0;
+                    for t in q.all_tracks_mut() {
+                        if (t.kind == TrackKind::Audio) != is_audio {
+                            continue;
+                        }
+                        for i in t.items.iter_mut().filter(|i| clips.contains(&i.id)) {
+                            let mut inst = def.instance();
+                            resolve_auto_points(&mut inst, (fw, fh), (fw, fh));
+                            // standard effects go before the intrinsic ones (render order)
+                            let pos = i.effects.iter().position(|e| e.def().is_some_and(|d| d.intrinsic)).unwrap_or(i.effects.len());
+                            let pos = if is_audio { i.effects.len() } else { pos };
+                            i.effects.insert(pos, inst);
+                            n += 1;
+                        }
                     }
-                    for i in t.items.iter_mut().filter(|i| clips.contains(&i.id)) {
-                        let mut inst = def.instance();
-                        resolve_auto_points(&mut inst, (fw, fh), (fw, fh));
-                        // standard effects go before the intrinsic ones (render order)
-                        let pos = i.effects.iter().position(|e| e.def().is_some_and(|d| d.intrinsic)).unwrap_or(i.effects.len());
-                        let pos = if is_audio { i.effects.len() } else { pos };
-                        i.effects.insert(pos, inst);
-                        n += 1;
-                    }
-                }
-                Ok(n)
-            })?;
-            Ok(Value::Null)
-        }),
-        cmd!("effects.remove", "Remove Effect", [], None, r#"{"clip":id,"index":n}"#, has_seq, |s, p| {
-            let c = clip_p(p, "clip").ok_or_else(|| bad("effects.remove", "need `clip`"))?;
-            let idx = u64_p(p, "index").ok_or_else(|| bad("effects.remove", "need `index`"))? as usize;
-            // the selected effect: where it is, and its selection once the effect at `idx` is gone
-            let effects = s.active_sequence().and_then(|q| q.find_item(c)).map(|(_, it)| it.effects.clone()).unwrap_or_default();
-            let sel = s.state.selected_effect.clone().filter(|e| e.clip == c).and_then(|e| e.index(&effects));
-            let after = sel.filter(|i| *i != idx).and_then(|i| {
-                let mut rest = effects;
-                if idx < rest.len() {
-                    rest.remove(idx);
-                }
-                crate::EffectSel::of(c, &rest, if i > idx { i - 1 } else { i })
-            });
-            s.edit_sequence("Remove Effect", |q, _, _| {
-                let (_, it) = q.find_item_mut(c).ok_or(filmcraft_edit::EditError::NoItem(c))?;
-                if it.effects.get(idx).and_then(|e| e.def()).is_some_and(|d| d.intrinsic) {
-                    return Err(EngineError::Other("intrinsic effects cannot be removed".into()));
-                }
-                if idx < it.effects.len() {
-                    it.effects.remove(idx);
-                }
-                Ok(())
-            })?;
-            if sel.is_some() {
-                s.state.selected_effect = after;
+                    Ok(n)
+                })?;
+                Ok(Value::Null)
             }
-            Ok(Value::Null)
-        }),
+        ),
+        cmd!(
+            "effects.remove",
+            "Remove Effect",
+            [],
+            None,
+            r#"{"clip":id|"item":id (a media item or subclip: its source clip effects),"index":n}"#,
+            always,
+            |s, p| {
+                let t = crate::source_effects::target_p(s, p, "effects.remove")?;
+                let idx = u64_p(p, "index").ok_or_else(|| bad("effects.remove", "need `index`"))? as usize;
+                // the selected effect: where it is, and its selection once the effect at `idx` is gone
+                let c = match t {
+                    crate::source_effects::EffectTarget::Clip(c) => Some(c),
+                    crate::source_effects::EffectTarget::Media(_) => None,
+                };
+                let effects = c.and_then(|c| s.active_sequence().and_then(|q| q.find_item(c))).map(|(_, it)| it.effects.clone()).unwrap_or_default();
+                let sel = c.and_then(|c| s.state.selected_effect.clone().filter(|e| e.clip == c).and_then(|e| e.index(&effects)));
+                let after = sel.filter(|i| *i != idx).and_then(|i| {
+                    let mut rest = effects;
+                    if idx < rest.len() {
+                        rest.remove(idx);
+                    }
+                    c.and_then(|c| crate::EffectSel::of(c, &rest, if i > idx { i - 1 } else { i }))
+                });
+                crate::source_effects::edit_effects(s, t, "Remove Effect", None, |it| {
+                    if it.effects.get(idx).and_then(|e| e.def()).is_some_and(|d| d.intrinsic) {
+                        return Err(EngineError::Other("intrinsic effects cannot be removed".into()));
+                    }
+                    if idx < it.effects.len() {
+                        it.effects.remove(idx);
+                    }
+                    Ok(())
+                })?;
+                if sel.is_some() {
+                    s.state.selected_effect = after;
+                }
+                Ok(Value::Null)
+            }
+        ),
         CommandSpec {
             id: "effects.select",
             label: "Select Effect",
@@ -3008,30 +3037,32 @@ fn build() -> Vec<CommandSpec> {
             "Set Effect Parameter",
             [],
             None,
-            r##"{"clip":id,"effect":"motion"|index,"param":str,"mask":n?,"value":num|[x,y]|"#rrggbb"|bool|path|"option name" (a choice takes its index or its name),"time":ticks? (where the keyframe goes when the parameter is animated, kept there even outside the clip; default: the playhead, pinned to the clip; a parameter that is not animated gets a new static value whatever the time),"keyframe":bool? (true: write a keyframe at `time` and animate the parameter),"merge":bool|key?,"begin":bool?}"##,
-            has_seq,
+            r##"{"clip":id|"item":id (a media item or subclip: its source clip effects; `time` is then media time),"effect":"motion"|index,"param":str,"mask":n?,"value":num|[x,y]|"#rrggbb"|bool|path|"option name" (a choice takes its index or its name),"time":ticks? (where the keyframe goes when the parameter is animated, kept there even outside the clip; default: the playhead, pinned to the clip; a parameter that is not animated gets a new static value whatever the time),"keyframe":bool? (true: write a keyframe at `time` and animate the parameter),"merge":bool|key?,"begin":bool?}"##,
+            always,
             |s, p| {
-                let c = clip_p(p, "clip").ok_or_else(|| bad("effects.setParam", "need `clip`"))?;
+                let t = crate::source_effects::target_p(s, p, "effects.setParam")?;
                 let pid = str_p(p, "param").ok_or_else(|| bad("effects.setParam", "need `param`"))?.to_string();
                 let val = p.get("value").cloned().ok_or_else(|| bad("effects.setParam", "need `value`"))?;
                 let eff = p.get("effect").cloned().unwrap_or(json!("motion"));
                 let keyframe = bool_p(p, "keyframe").unwrap_or(false);
                 // an explicit `time` outside the clip keeps its keyframe there, before the start as after
                 // the end, so a ramp across a cut keeps its slope (#1055); the playhead is pinned to the clip
-                let at = time_p(s, p, "");
+                let at = match t.media() {
+                    Some(m) => Some(crate::source_effects::media_time_p(s, p, m)),
+                    None => time_p(s, p, ""),
+                };
                 let ph = s.playhead();
                 let pq = p.clone();
                 // `merge`: a drag of one parameter is one undo step (#201), and a key makes one of a
                 // drag that changes several (the Program monitor's handles); `begin` starts a new one
                 let merge = match p.get("merge") {
-                    Some(Value::String(key)) => Some(format!("setParam:{}:{key}", c.0)),
-                    _ => bool_p(p, "merge").unwrap_or(false).then(|| format!("setParam:{}:{eff}:{pid}:{}", c.0, p.get("mask").unwrap_or(&Value::Null))),
+                    Some(Value::String(key)) => Some(format!("setParam:{}:{key}", t.key())),
+                    _ => bool_p(p, "merge").unwrap_or(false).then(|| format!("setParam:{}:{eff}:{pid}:{}", t.key(), p.get("mask").unwrap_or(&Value::Null))),
                 };
                 if bool_p(p, "begin").unwrap_or(false) {
                     s.history.merge_key = None;
                 }
-                let keyframes = s.edit_sequence_as("Change Effect Parameter", merge.as_deref(), |q, _, _| {
-                    let (_, it) = q.find_item_mut(c).ok_or(filmcraft_edit::EditError::NoItem(c))?;
+                let keyframes = crate::source_effects::edit_effects(s, t, "Change Effect Parameter", merge.as_deref(), |it| {
                     let mt = it.source_time_at(at.unwrap_or_else(|| ph.clamp(it.start, (it.end() - Tick(1)).max(it.start))));
                     let e = match &eff {
                         Value::Number(n) => it.effects.get_mut(n.as_u64().unwrap_or(0) as usize),
@@ -3097,13 +3128,12 @@ fn build() -> Vec<CommandSpec> {
                 Ok(json!({"keyframes": keyframes}))
             }
         ),
-        cmd!("effects.toggleAnimation", "Toggle Animation", [], None, r#"{"clip":id,"effect":str|index,"param":str,"mask":n?}"#, has_seq, |s, p| {
-            let c = clip_p(p, "clip").ok_or_else(|| bad("effects.toggleAnimation", "need `clip`"))?;
+        cmd!("effects.toggleAnimation", "Toggle Animation", [], None, r#"{"clip":id|"item":id,"effect":str|index,"param":str,"mask":n?}"#, always, |s, p| {
+            let t = crate::source_effects::target_p(s, p, "effects.toggleAnimation")?;
             let pid = str_p(p, "param").ok_or_else(|| bad("effects.toggleAnimation", "need `param`"))?.to_string();
             let eff = p.get("effect").cloned().unwrap_or(json!("motion"));
-            let ph = s.playhead();
-            s.edit_sequence("Toggle Animation", |q, _, _| {
-                let (_, it) = q.find_item_mut(c).ok_or(filmcraft_edit::EditError::NoItem(c))?;
+            let ph = effect_time_p(s, p, t);
+            crate::source_effects::edit_effects(s, t, "Toggle Animation", None, |it| {
                 let mt = it.source_time_at(ph.clamp(it.start, (it.end() - Tick(1)).max(it.start)));
                 let e = match &eff {
                     Value::Number(n) => it.effects.get_mut(n.as_u64().unwrap_or(0) as usize),
@@ -3116,11 +3146,10 @@ fn build() -> Vec<CommandSpec> {
             })?;
             Ok(Value::Null)
         }),
-        cmd!("effects.toggleEnabled", "Toggle Effect", [], None, r#"{"clip":id,"index":n}"#, has_seq, |s, p| {
-            let c = clip_p(p, "clip").ok_or_else(|| bad("effects.toggleEnabled", "need `clip`"))?;
+        cmd!("effects.toggleEnabled", "Toggle Effect", [], None, r#"{"clip":id|"item":id,"index":n}"#, always, |s, p| {
+            let t = crate::source_effects::target_p(s, p, "effects.toggleEnabled")?;
             let idx = u64_p(p, "index").unwrap_or(0) as usize;
-            s.edit_sequence("Toggle Effect", |q, _, _| {
-                let (_, it) = q.find_item_mut(c).ok_or(filmcraft_edit::EditError::NoItem(c))?;
+            crate::source_effects::edit_effects(s, t, "Toggle Effect", None, |it| {
                 if let Some(e) = it.effects.get_mut(idx) {
                     e.enabled = !e.enabled;
                 }
@@ -3128,13 +3157,12 @@ fn build() -> Vec<CommandSpec> {
             })?;
             Ok(Value::Null)
         }),
-        cmd!("effects.reset", "Reset Effect", [], None, r#"{"clip":id,"index":n}"#, has_seq, |s, p| {
-            let c = clip_p(p, "clip").ok_or_else(|| bad("effects.reset", "need `clip`"))?;
+        cmd!("effects.reset", "Reset Effect", [], None, r#"{"clip":id|"item":id,"index":n}"#, always, |s, p| {
+            let t = crate::source_effects::target_p(s, p, "effects.reset")?;
             let idx = u64_p(p, "index").unwrap_or(0) as usize;
-            let frame = s.active_sequence().map(|q| (q.settings.width, q.settings.height)).unwrap_or((1920, 1080));
-            let ph = s.playhead();
-            s.edit_sequence("Reset Effect", |q, _, _| {
-                let (_, it) = q.find_item_mut(c).ok_or(filmcraft_edit::EditError::NoItem(c))?;
+            let frame = effect_frame(s, t);
+            let ph = effect_time_p(s, p, t);
+            crate::source_effects::edit_effects(s, t, "Reset Effect", None, |it| {
                 let mt = it.source_time_at(ph.clamp(it.start, (it.end() - Tick(1)).max(it.start)));
                 if let Some(e) = it.effects.get_mut(idx) {
                     reset_params(e, None, frame, mt);
@@ -3143,14 +3171,13 @@ fn build() -> Vec<CommandSpec> {
             })?;
             Ok(Value::Null)
         }),
-        cmd!("effects.resetParam", "Reset Parameter", [], None, r#"{"clip":id,"effect":str|index,"param":str}"#, has_seq, |s, p| {
-            let c = clip_p(p, "clip").ok_or_else(|| bad("effects.resetParam", "need `clip`"))?;
+        cmd!("effects.resetParam", "Reset Parameter", [], None, r#"{"clip":id|"item":id,"effect":str|index,"param":str}"#, always, |s, p| {
+            let t = crate::source_effects::target_p(s, p, "effects.resetParam")?;
             let pid = str_p(p, "param").ok_or_else(|| bad("effects.resetParam", "need `param`"))?.to_string();
             let eff = p.get("effect").cloned().unwrap_or(json!("motion"));
-            let frame = s.active_sequence().map(|q| (q.settings.width, q.settings.height)).unwrap_or((1920, 1080));
-            let ph = s.playhead();
-            s.edit_sequence("Reset Parameter", |q, _, _| {
-                let (_, it) = q.find_item_mut(c).ok_or(filmcraft_edit::EditError::NoItem(c))?;
+            let frame = effect_frame(s, t);
+            let ph = effect_time_p(s, p, t);
+            crate::source_effects::edit_effects(s, t, "Reset Parameter", None, |it| {
                 let mt = it.source_time_at(ph.clamp(it.start, (it.end() - Tick(1)).max(it.start)));
                 let e = match &eff {
                     Value::Number(n) => it.effects.get_mut(n.as_u64().unwrap_or(0) as usize),
@@ -3170,20 +3197,26 @@ fn build() -> Vec<CommandSpec> {
             "Add/Remove Keyframe",
             [],
             None,
-            r#"{"clip":id,"effect":str|index,"param":str,"mask":n?,"time":ticks?}"#,
-            has_seq,
+            r#"{"clip":id|"item":id (source clip effects; times are then media ticks),"effect":str|index,"param":str,"mask":n?,"time":ticks?}"#,
+            always,
             |s, p| { keyframe_op(s, p, "add") }
         ),
-        cmd!("effects.deleteKeyframe", "Delete Keyframe", [], None, r#"{"clip":id,"effect":str|index,"param":str,"mediaTime":ticks}"#, has_seq, |s, p| {
-            keyframe_op(s, p, "delete")
-        }),
+        cmd!(
+            "effects.deleteKeyframe",
+            "Delete Keyframe",
+            [],
+            None,
+            r#"{"clip":id|"item":id,"effect":str|index,"param":str,"mediaTime":ticks}"#,
+            always,
+            |s, p| { keyframe_op(s, p, "delete") }
+        ),
         cmd!(
             "effects.moveKeyframe",
             "Move Keyframe",
             [],
             None,
-            r#"{"clip":id,"effect":str|index,"param":str,"mediaTime":ticks,"to":ticks,"value":any?,"merge":bool?,"begin":bool?}"#,
-            has_seq,
+            r#"{"clip":id|"item":id,"effect":str|index,"param":str,"mediaTime":ticks,"to":ticks,"value":any?,"merge":bool?,"begin":bool?}"#,
+            always,
             |s, p| keyframe_op(s, p, "move")
         ),
         cmd!(
@@ -3200,8 +3233,8 @@ fn build() -> Vec<CommandSpec> {
             "Keyframe Interpolation",
             [],
             None,
-            r#"{"clip":id,"effect":str|index,"param":str,"mediaTime":ticks,"interpolation":"linear|bezier|autoBezier|continuousBezier|hold|easeIn|easeOut"}"#,
-            has_seq,
+            r#"{"clip":id|"item":id,"effect":str|index,"param":str,"mediaTime":ticks,"interpolation":"linear|bezier|autoBezier|continuousBezier|hold|easeIn|easeOut"}"#,
+            always,
             |s, p| keyframe_op(s, p, "interp")
         ),
         cmd!(
@@ -3209,8 +3242,8 @@ fn build() -> Vec<CommandSpec> {
             "Edit Keyframe",
             [],
             None,
-            r#"{"clip":id,"effect":str|index,"param":str,"mediaTime":ticks,"value":any?,"inInfluence":0..1?,"outInfluence":0..1?,"merge":bool?,"begin":bool?}"#,
-            has_seq,
+            r#"{"clip":id|"item":id,"effect":str|index,"param":str,"mediaTime":ticks,"value":any?,"inInfluence":0..1?,"outInfluence":0..1?,"merge":bool?,"begin":bool?}"#,
+            always,
             |s, p| keyframe_op(s, p, "set")
         ),
         // ================= Project panel =================
@@ -3392,8 +3425,8 @@ fn build() -> Vec<CommandSpec> {
         query!(
             "effects.list",
             "List Effects",
-            r#"{"kind":"Video"|"Audio"|"VideoTransition"|"AudioTransition"?,"folder":"Video Transitions/Wipe"?,"detail":bool?}"#,
-            |_, p| Ok(list_effects(p))
+            r#"{"kind":"Video"|"Audio"|"VideoTransition"|"AudioTransition"?,"folder":"Video Transitions/Wipe"?,"detail":bool?} | {"item":id} (the source clip effects of a media item or subclip)"#,
+            |s, p| if crate::source_effects::names_item(p) { crate::source_effects::list(s, p) } else { Ok(list_effects(p)) }
         ),
         query!("history.list", "List History", "{}", |s, _| Ok(
             json!({"undo": s.history.undo.iter().map(|h| &h.0).collect::<Vec<_>>(), "redo": s.history.redo.iter().map(|h| &h.0).collect::<Vec<_>>()})
@@ -3458,11 +3491,32 @@ fn reset_params(e: &mut filmcraft_project::EffectInstance, only: Option<&str>, f
     any
 }
 
+/// The time a clip effect command works at when it names none: the playhead for a timeline clip
+/// (a timeline time), the Source Monitor's playhead for a media item's source clip effects (media
+/// time, which the view [`crate::source_effects::edit_effects`] gives the command maps to itself).
+fn effect_time_p(s: &Session, p: &Value, t: crate::source_effects::EffectTarget) -> Tick {
+    match t.media() {
+        Some(m) => crate::source_effects::media_time_p(s, p, m),
+        None => s.playhead(),
+    }
+}
+
+/// The frame size "auto" points of an effect on `t` are resolved against.
+fn effect_frame(s: &Session, t: crate::source_effects::EffectTarget) -> (u32, u32) {
+    match t.media() {
+        Some(m) => crate::source_effects::media_frame(&s.project, m),
+        None => s.active_sequence().map(|q| (q.settings.width, q.settings.height)).unwrap_or((1920, 1080)),
+    }
+}
+
 fn keyframe_op(s: &mut Session, p: &Value, op: &str) -> Result<Value> {
-    let c = clip_p(p, "clip").ok_or_else(|| bad("keyframe", "need `clip`"))?;
+    let t = crate::source_effects::target_p(s, p, "keyframe")?;
     let pid = str_p(p, "param").ok_or_else(|| bad("keyframe", "need `param`"))?.to_string();
     let eff = p.get("effect").cloned().unwrap_or(json!("motion"));
-    let ph = time_p(s, p, "").unwrap_or(s.playhead());
+    let ph = match t.media() {
+        Some(m) => crate::source_effects::media_time_p(s, p, m),
+        None => time_p(s, p, "").unwrap_or(s.playhead()),
+    };
     let mtime = p.get("mediaTime").and_then(Value::as_i64).map(Tick);
     let to = p.get("to").and_then(Value::as_i64).map(Tick);
     let interp = str_p(p, "interpolation").map(str::to_string);
@@ -3474,12 +3528,11 @@ fn keyframe_op(s: &mut Session, p: &Value, op: &str) -> Result<Value> {
         _ => "Keyframe Interpolation",
     };
     // a keyframe dragged on the timeline is one undo step, like a dragged value
-    let merge = bool_p(p, "merge").unwrap_or(false).then(|| format!("keyframe:{op}:{}:{eff}:{pid}:{}", c.0, p.get("mask").unwrap_or(&Value::Null)));
+    let merge = bool_p(p, "merge").unwrap_or(false).then(|| format!("keyframe:{op}:{}:{eff}:{pid}:{}", t.key(), p.get("mask").unwrap_or(&Value::Null)));
     if bool_p(p, "begin").unwrap_or(false) {
         s.history.merge_key = None;
     }
-    s.edit_sequence_as(label, merge.as_deref(), |q, _, _| {
-        let (_, it) = q.find_item_mut(c).ok_or(filmcraft_edit::EditError::NoItem(c))?;
+    crate::source_effects::edit_effects(s, t, label, merge.as_deref(), |it| {
         let mt_now = it.source_time_at(ph.clamp(it.start, (it.end() - Tick(1)).max(it.start)));
         let e = match &eff {
             Value::Number(n) => it.effects.get_mut(n.as_u64().unwrap_or(0) as usize),
@@ -4237,7 +4290,7 @@ pub fn inspect_project(s: &Session) -> Value {
             "children": b.children.iter().map(|c| match c {
                 filmcraft_project::BinEntry::Item(i) => {
                     let it = p.item(*i);
-                    json!({"item": i.0, "name": it.map(|x| x.name.clone()), "type": it.map(|x| x.type_label()), "duration": it.map(|x| x.duration().0), "label": it.map(|x| x.label.name())})
+                    json!({"item": i.0, "name": it.map(|x| x.name.clone()), "type": it.map(|x| x.type_label()), "duration": it.map(|x| x.duration().0), "label": it.map(|x| x.label.name()), "sourceEffects": p.source_effects_of(*i).len()})
                 }
                 filmcraft_project::BinEntry::Bin(b) => bin(b, p),
             }).collect::<Vec<_>>()
@@ -4264,6 +4317,7 @@ pub fn inspect_sequence(s: &Session, id: ItemId, q: &filmcraft_project::Sequence
                 "startFrame": rate.frame_at(i.start), "durationFrames": rate.frame_at(i.duration), "sourceIn": i.source_in.0, "speed": i.speed, "reverse": i.reverse,
                 "end": i.end().0, "endFrame": rate.frame_at(i.end()), "sourceOut": i.source_out().0, "gainDb": i.gain_db,
                 "enabled": i.enabled, "link": i.link, "label": i.label.name(),
+                "sourceEffects": s.project.source_effects_of(i.item).len(),
                 "effects": i.effects.iter().map(|e| json!({"effect": e.effect, "enabled": e.enabled, "masks": e.masks.len(), "params": e.params.iter().map(|(k, p)| (k.clone(), json!({"value": format!("{:?}", p.value), "keyframes": p.keyframes.len()}))).collect::<serde_json::Map<_, _>>()})).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
             "transitions": t.transitions.iter().map(|x| json!({"id": x.id.0, "effect": x.effect.effect, "start": x.start.0, "duration": x.duration.0, "from": x.from.map(|c| c.0), "to": x.to.map(|c| c.0), "reverse": x.reverse, "align": filmcraft_edit::transitions::bounds(t, x).map(|b| filmcraft_edit::transitions::alignment(x, b.1, rate.frame_duration()).id()), "params": x.effect.params.iter().map(|(k, v)| (k.clone(), serde_json::to_value(&v.value).unwrap_or_default())).collect::<serde_json::Map<_, _>>()})).collect::<Vec<_>>(),

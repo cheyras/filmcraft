@@ -22,6 +22,7 @@ fn add_gen(p: &mut Project, g: GeneratorSource) -> ItemId {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         }),
         None,
     )
