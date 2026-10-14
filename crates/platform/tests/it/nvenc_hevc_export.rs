@@ -39,6 +39,7 @@ fn project(w: u32, h: u32, frames: i64) -> (Arc<Project>, filmcraft_project::Ite
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         })),
         None,
     );

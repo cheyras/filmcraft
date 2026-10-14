@@ -2,7 +2,7 @@ use super::HexColor;
 use super::label::Label;
 use super::sequence::{Sequence, SplitMarks, checked_par};
 use super::track::{AudioChannels, Marker};
-use super::{BTreeMap, BinId, Deserialize, FrameRate, Generator, ItemId, MediaInfo, Serialize, TICKS_PER_SECOND, Tick, TimeRange};
+use super::{BTreeMap, BinId, Deserialize, EffectInstance, FrameRate, Generator, ItemId, MediaInfo, Serialize, TICKS_PER_SECOND, Tick, TimeRange};
 
 /// Where an item's pixels/samples come from.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -70,6 +70,11 @@ pub struct MediaClip {
     /// checks a candidate against it. None for generators and projects from older builds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity: Option<MediaIdentity>,
+    /// Source clip effects (Premiere: master clip effects). Rendered before every timeline clip's
+    /// own effects, wherever this media is used (subclips share them). Standard video effects
+    /// only; Motion, Opacity and the other fixed effects belong to the timeline clip.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_effects: Vec<EffectInstance>,
 }
 
 /// What a media file looked like when it was linked: its size plus a fast content fingerprint

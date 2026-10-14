@@ -25,10 +25,11 @@
 //! sequence resolution, as the sum over visible layers of:
 //! * **decode**: per source codec at 1080p — H.264 3 ms, HEVC 6 ms, ProRes 2.5 ms, MJPEG 4 ms,
 //!   other files 4 ms, stills/generators 1 ms — scaled by source pixels / 1080p pixels;
-//! * **CPU layer path**: a layer with standard effects or a non-Normal blend mode leaves the GPU
-//!   fast path and pays 10 ms (1080p) for linear conversion, transform and compositing;
-//! * **effects**: per enabled standard effect, a measured tier cost at 1080p (6 / 20 / 50 ms, see
-//!   [`effect_cost_ms`]), scaled by sequence pixels / 1080p pixels;
+//! * **CPU layer path**: a layer with standard effects (its own or its media's source clip
+//!   effects) or a non-Normal blend mode leaves the GPU fast path and pays 10 ms (1080p) for linear
+//!   conversion, transform and compositing;
+//! * **effects**: per enabled standard effect, source clip effects included, a measured tier cost
+//!   at 1080p (6 / 20 / 50 ms, see [`effect_cost_ms`]), scaled by sequence pixels / 1080p pixels;
 //! * **transitions**: dissolves/dips 1 ms (GPU), any other transition renders both sides on the
 //!   CPU: 12 ms plus the CPU path of both layers;
 //! * **adjustment layers**: whole-frame CPU render (10 ms) plus their effects.
@@ -333,6 +334,17 @@ fn hash_source(h: &mut Fnv128, project: &Project, id: ItemId, kind: TrackKind, d
             c.mark_out = None;
             c.markers.clear();
             h.json(&("media", &c));
+            // A source effect's library LUT: the reference is in the effect above, but a LUT that
+            // was removed (it then renders unchanged) must not hash like one that resolves.
+            for e in &c.source_effects {
+                for id in ["input_lut", "look_lut"] {
+                    if let Some(filmcraft_project::ParamValue::Text(spec)) = e.param(id).map(|p| &p.value)
+                        && !spec.is_empty()
+                    {
+                        h.json(&("source_lut", id, crate::luts::content_key(Some(project), spec)));
+                    }
+                }
+            }
             if matches!(c.media, filmcraft_project::MediaRef::Generator(_)) {
                 // generators may draw their name (demo footage)
                 h.json(&pi.name);
@@ -471,19 +483,19 @@ fn decode_cost_ms(project: &Project, id: ItemId, depth: u32) -> f64 {
                 .iter()
                 .filter(|t| t.enabled)
                 .flat_map(|t| t.items.iter())
-                .map(|it| decode_cost_ms(project, it.item, depth + 1) + item_fx_cost(it, 1.0))
+                .map(|it| decode_cost_ms(project, it.item, depth + 1) + item_fx_cost(project, it, 1.0))
                 .fold(0.0, f64::max);
             10.0 + id_cost
         }
     }
 }
 
-fn item_fx_cost(it: &TrackItem, px: f64) -> f64 {
-    it.effects.iter().filter(|e| e.enabled && e.def().is_some_and(|d| !d.intrinsic)).map(|e| effect_cost_ms(&e.effect) * px).sum()
+fn item_fx_cost(project: &Project, it: &TrackItem, px: f64) -> f64 {
+    crate::clip_effects(project, it).filter(|e| e.enabled).map(|e| effect_cost_ms(&e.effect) * px).sum()
 }
 
 fn cpu_layer(project: &Project, it: &TrackItem) -> bool {
-    let fx = it.effects.iter().any(|e| e.enabled && e.def().is_some_and(|d| !d.intrinsic)) || it.has_opacity_masks();
+    let fx = crate::clip_effects(project, it).any(|e| e.enabled) || it.has_opacity_masks();
     let blend = crate::opacity_blend(it, it.source_in).1 != crate::Blend::Normal;
     let nested = project.item(it.item).is_some_and(|p| matches!(p.kind, ItemKind::Sequence(_)));
     fx || blend || nested
@@ -491,11 +503,11 @@ fn cpu_layer(project: &Project, it: &TrackItem) -> bool {
 
 fn layer_cost(project: &Project, it: &TrackItem, px: f64, force_cpu: bool) -> f64 {
     if project.item(it.item).is_some_and(|p| matches!(p.kind, ItemKind::AdjustmentLayer { .. })) {
-        return 10.0 * px + item_fx_cost(it, px);
+        return 10.0 * px + item_fx_cost(project, it, px);
     }
     let decode = decode_cost_ms(project, it.item, 0);
     let path = if force_cpu || cpu_layer(project, it) { 10.0 * px } else { 0.5 };
-    decode + path + item_fx_cost(it, px)
+    decode + path + item_fx_cost(project, it, px)
 }
 
 fn estimate_cost(project: &Project, seq: &Sequence, layers: &[Layer]) -> f64 {
@@ -517,7 +529,7 @@ fn estimate_cost(project: &Project, seq: &Sequence, layers: &[Layer]) -> f64 {
 /// A single clip that plays natively: no standard effects, untouched fixed effects, normal speed,
 /// source frame size and rate equal to the sequence's.
 fn native(project: &Project, seq: &Sequence, it: &TrackItem) -> bool {
-    if it.has_standard_effects() || it.has_modified_intrinsics() || (it.speed - 1.0).abs() > 1e-9 || it.reverse || it.frame_hold.is_some() {
+    if crate::has_clip_effects(project, it) || it.has_modified_intrinsics() || (it.speed - 1.0).abs() > 1e-9 || it.reverse || it.frame_hold.is_some() {
         return false;
     }
     match project.item(it.item).map(|p| &p.kind) {

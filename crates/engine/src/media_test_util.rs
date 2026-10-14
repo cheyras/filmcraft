@@ -42,6 +42,7 @@ pub fn make_movie_at(path: &Path, scene: DemoScene, w: u32, h: u32, rate: FrameR
         offline: false,
         proxy: None,
         identity: None,
+        source_effects: Vec::new(),
     };
     let item = p.add_item("scene", Label::Iris, ItemKind::Media(Box::new(clip)), None);
     let seq = p.new_sequence("s", SequenceSettings { width: w, height: h, frame_rate: rate, ..Default::default() }, 1, 1, None);

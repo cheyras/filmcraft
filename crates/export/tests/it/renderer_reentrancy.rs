@@ -64,6 +64,7 @@ fn project() -> (Arc<Project>, ItemId, SourceMap) {
                 offline: false,
                 proxy: None,
                 identity: None,
+                source_effects: Vec::new(),
             })),
             None,
         );

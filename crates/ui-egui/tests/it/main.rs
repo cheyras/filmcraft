@@ -66,6 +66,7 @@ mod settings_menus_ui;
 mod settings_ui;
 mod shared_docking_ui;
 mod source_drag_ui;
+mod source_effects_ui;
 mod source_playback_ui;
 mod status_bar_ui;
 mod timecode_ui;

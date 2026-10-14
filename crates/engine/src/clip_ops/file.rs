@@ -203,6 +203,7 @@ pub(super) fn offline_file(s: &mut Session, p: &Value) -> Result<Value> {
                 offline: true,
                 proxy: None,
                 identity: None,
+                source_effects: Vec::new(),
             })),
             None,
         );

@@ -397,6 +397,7 @@ fn project(frames: i64) -> (Arc<Project>, filmcraft_project::ItemId, SourceMap) 
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         })),
         None,
     );

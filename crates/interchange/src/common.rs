@@ -359,6 +359,7 @@ pub(crate) fn media_clip(media: MediaRef, info: MediaInfo) -> MediaClip {
         offline: false,
         proxy: None,
         identity: None,
+        source_effects: Vec::new(),
     }
 }
 
@@ -931,6 +932,7 @@ mod tests {
                 offline: false,
                 proxy: None,
                 identity: None,
+                source_effects: Vec::new(),
             })),
             None,
         );

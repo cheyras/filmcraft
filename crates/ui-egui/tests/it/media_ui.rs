@@ -42,6 +42,7 @@ fn make_movie(path: &Path, scene: DemoScene, w: u32, h: u32, frames: i64) {
         offline: false,
         proxy: None,
         identity: None,
+        source_effects: Vec::new(),
     };
     let mut p = Project::new("fixture");
     let item = p.add_item("scene", Label::Iris, ItemKind::Media(Box::new(clip)), None);
@@ -200,6 +201,7 @@ fn source_transport_steps_every_frame_at_a_fractional_tick_rate() {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         })),
         None,
     );
@@ -243,6 +245,7 @@ fn source_menu_steps_use_ordinals_for_explicit_targets_and_focus() {
                 offline: false,
                 proxy: None,
                 identity: None,
+                source_effects: Vec::new(),
             })),
             None,
         );
@@ -319,6 +322,7 @@ fn zero_tick_frame_duration_source() -> (Driver, Tick) {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         })),
         None,
     );

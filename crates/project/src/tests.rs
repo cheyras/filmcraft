@@ -18,6 +18,7 @@ fn demo_project() -> (Project, ItemId, ItemId) {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         })),
         None,
     );

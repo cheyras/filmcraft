@@ -87,6 +87,12 @@ impl Project {
         None
     }
 
+    /// The source clip effects (master clip effects) of what `item` shows, following subclips to
+    /// their media. Empty for anything that is not media or a subclip of media.
+    pub fn source_effects_of(&self, item: ItemId) -> &[EffectInstance] {
+        self.resolve_media(item).map_or(&[], |(_, media, _)| media.source_effects.as_slice())
+    }
+
     /// Size in pixels of what an item shows: a media clip's picture, a sequence's frame, an
     /// adjustment layer or graphic; a subclip has the size of its parent. `None` without
     /// picture. This is the size the renderer centres a clip's "auto" anchor in.

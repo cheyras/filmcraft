@@ -70,6 +70,7 @@ fn placing_media_with_two_streams_expands_tracks_and_keeps_stream_indices() {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         })),
         None,
     );
@@ -127,6 +128,7 @@ fn clip_peaks_measure_the_stream_the_clip_plays() {
             offline: false,
             proxy: None,
             identity: None,
+            source_effects: Vec::new(),
         })),
         None,
     );

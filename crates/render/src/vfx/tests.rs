@@ -1281,6 +1281,7 @@ mod pipeline {
                 offline: false,
                 proxy: None,
                 identity: None,
+                source_effects: Vec::new(),
             })),
             None,
         );

@@ -670,6 +670,7 @@ fn preview_item(
                         offline: false,
                         proxy: None,
                         identity: None,
+                        source_effects: Vec::new(),
                     })),
                     metadata: Default::default(),
                     created: 0,
