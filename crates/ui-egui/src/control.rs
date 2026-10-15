@@ -167,6 +167,13 @@ pub fn handle(app: &mut FilmcraftApp, ctx: &egui::Context, req: &ControlRequest)
             if let Some(f) = s("focused").and_then(PanelKind::from_name) {
                 app.ui.focused = f;
             }
+            // Lumetri Color / Effect Controls: edit the Source Monitor's media or the selected clip
+            if let Some(v) = s("fxTarget") {
+                match crate::panels::fx_target::Pick::parse(v) {
+                    Some(pick) => app.ui.fx_target.pick = pick,
+                    None => return err("unknown fxTarget (source, sequence)"),
+                }
+            }
             if let Some(r) = s("playbackRes") {
                 app.ui.program.res = PlaybackRes::ALL
                     .into_iter()

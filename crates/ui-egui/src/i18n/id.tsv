@@ -893,7 +893,6 @@
 	Generate Keyframes	Buat Bingkai Kunci
 	Clip Volume	Volume Klip
 	(no clip selected)	(tidak ada klip yang dipilih)
-	Master · {name}	Master · {name}
 	Add Lumetri Color to clip	Tambahkan Lumetri Color ke klip
 	Input LUT	LUT Input
 	Color	Warna
@@ -3575,3 +3574,12 @@
 	Appearance Settings…	Pengaturan Tampilan…
 	Add to favorites	Tambahkan ke favorit
 	Remove from favorites	Hapus dari favorit
+	Open media in the Source monitor to edit its source clip effects	Buka media di Monitor Sumber untuk mengedit efek klip sumbernya
+	Select a clip in the Timeline to edit its effects	Pilih klip di Linimasa untuk mengedit efeknya
+	Effect presets apply to clips in the Timeline, not to source clips	Preset efek berlaku untuk klip di Linimasa, bukan untuk klip sumber
+	Select a clip or open media in the Source monitor	Pilih klip atau buka media di Monitor Sumber
+	Add Lumetri Color to source	Tambahkan Lumetri Color ke sumber
+	Lumetri Color {n}	Lumetri Color {n}
+	Clip effects: {n}	Efek klip: {n}
+	Fixed effects changed	Efek tetap diubah
+	Source clip effects: {n}	Efek klip sumber: {n}

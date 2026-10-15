@@ -479,6 +479,10 @@ pub struct UiState {
     /// Effect Controls: the selected keyframes, highlighted in the keyframe lane (a click selects one).
     #[serde(default)]
     pub keyframe_selection: Vec<KeyframeRef>,
+    /// What Lumetri Color and Effect Controls edit: the Source Monitor's media or the selected clip
+    /// ([`crate::panels::fx_target`]).
+    #[serde(default)]
+    pub fx_target: crate::panels::fx_target::TargetState,
     /// Essential Sound sub-tab: "Edit" or "Browse".
     #[serde(default)]
     pub essential_sound_tab: String,
@@ -981,6 +985,7 @@ impl Default for UiState {
             failed_link: None,
             eyedropper: None,
             keyframe_selection: Vec::new(),
+            fx_target: Default::default(),
             essential_sound_tab: "Edit".into(),
             tts: Default::default(),
             export: Default::default(),

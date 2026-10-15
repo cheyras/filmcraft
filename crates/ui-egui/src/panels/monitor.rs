@@ -445,6 +445,10 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
     // ---- transport buttons
     let row3 = Rect::from_min_size(pos2(rect.min.x, zoom_bar.max.y + 4.0), vec2(rect.width(), 32.0));
     transport(app, ui, row3, which);
+    // an effect dragged from the Effects panel onto the Source monitor becomes a source clip effect
+    if which == Which::Source {
+        crate::panels::fx_target::accept_effect_drop(app, ui, rect);
+    }
 }
 
 /// How many of a paused monitor's latest requests are remembered ([`asked_before`]): about a

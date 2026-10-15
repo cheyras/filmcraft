@@ -122,6 +122,8 @@ pub enum Icon {
     Moon,
     /// Colour parameters: pick a colour from the Program monitor (a pipette).
     Eyedropper,
+    /// A source clip (the media open in the Source Monitor): a frame with a play triangle.
+    SourceClip,
 }
 
 pub struct Pen16<'a> {
@@ -770,6 +772,10 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.line(&[(9.5, 7.5), (3.5, 12.5)]);
             pen.line(&[(3.5, 12.5), (2.5, 13.5)]);
         }
+        SourceClip => {
+            pen.rect(1.5, 3.0, 14.5, 13.0);
+            pen.fill(&[(6.3, 5.8), (6.3, 10.2), (10.7, 8.0)]);
+        }
     }
 }
 
@@ -903,6 +909,7 @@ mod tests {
         Network,
         Clock,
         Eyedropper,
+        SourceClip,
     ];
 
     /// Paint `icon` at `ppp` device pixels per point into a rect of `size` points whose corner is

@@ -1585,6 +1585,24 @@ impl Project {
 
     /// Build a track item for `item` placed at `start` covering `source` range (media time).
     pub fn make_track_item(&mut self, item: ItemId, kind: TrackKind, start: Tick, source: TimeRange, seq_rate: FrameRate) -> Option<TrackItem> {
+        self.items.get(&item)?;
+        let id = ClipId(self.alloc_id());
+        self.track_item_with(id, item, kind, start, source, seq_rate)
+    }
+
+    /// A timeline-clip-shaped view of a media item: a video clip that starts at 0, covers all of
+    /// the media at normal speed, and has the media's source clip effects as its `effects` (no
+    /// fixed ones). Source clip effects are edited and drawn through it, with times in media time.
+    /// Its id is the media item's (ids are one space), and nothing is allocated.
+    pub fn media_view(&self, item: ItemId) -> Option<TrackItem> {
+        let ItemKind::Media(media) = &self.items.get(&item)?.kind else { return None };
+        let range = TimeRange::new(Tick::ZERO, media.info.duration);
+        let mut view = self.track_item_with(ClipId(item.0), item, TrackKind::Video, Tick::ZERO, range, media.info.frame_rate())?;
+        view.effects = media.source_effects.clone();
+        Some(view)
+    }
+
+    fn track_item_with(&self, id: ClipId, item: ItemId, kind: TrackKind, start: Tick, source: TimeRange, seq_rate: FrameRate) -> Option<TrackItem> {
         let it = self.items.get(&item)?;
         let name = it.name.clone();
         let label = it.label;
@@ -1605,7 +1623,6 @@ impl Project {
         } else {
             Vec::new()
         };
-        let id = ClipId(self.alloc_id());
         let dur = seq_rate.snap_nearest(source.duration).max(seq_rate.frame_duration());
         Some(TrackItem {
             id,

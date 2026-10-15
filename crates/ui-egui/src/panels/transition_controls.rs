@@ -79,7 +79,14 @@ fn duration_field(ui: &mut egui::Ui, frames: &mut i64, max: i64, rate: FrameRate
 }
 
 /// Effect Controls for a selected transition. `rect` is the panel.
-pub fn effect_controls(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, id: TransitionId) {
+/// The name of the selected transition, for Effect Controls' pill.
+pub fn name(app: &FilmcraftApp, id: TransitionId) -> Option<String> {
+    let (x, ..) = lookup(app, id)?;
+    Some(x.effect.def().map_or(x.effect.effect.as_str(), |d| d.name).to_string())
+}
+
+/// `header_h` is the height Effect Controls' pills take at the top of the settings.
+pub fn effect_controls(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, header_h: f32, id: TransitionId) {
     let t = app.tokens;
     let Some((x, align, max_frames)) = lookup(app, id) else {
         crate::dock::placeholder(ui, rect, &t, tl!("(no clip selected)"));
@@ -88,9 +95,7 @@ pub fn effect_controls(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, id
     let Some(seq) = app.session.active_sequence() else { return };
     let (rate, drop_frame) = (seq.settings.frame_rate.sane(), seq.settings.drop_frame);
     let (fw, fh) = (f64::from(seq.settings.width), f64::from(seq.settings.height));
-    let seq_name = app.session.state.active_sequence.and_then(|i| app.session.project.item(i)).map(|i| i.name.clone()).unwrap_or_default();
     let def = x.effect.def();
-    let name = def.map_or(x.effect.effect.as_str(), |d| d.name).to_string();
     let one_sided = x.from.is_none() || x.to.is_none();
     let mut changes: Vec<Value> = Vec::new();
     let mut elems: Elems = Vec::new();
@@ -103,10 +108,10 @@ pub fn effect_controls(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, id
     let lane = Rect::from_min_max(pos2(split + 4.0, rect.min.y + 4.0), pos2(rect.max.x - 6.0, rect.max.y - 6.0));
     let has_lane = lane.width() >= MIN_LANE_W / 2.0 && lane.height() >= RULER_H + 3.0 * BAR_H;
     let list = if has_lane { Rect::from_min_max(rect.min, pos2(split, rect.max.y)) } else { rect };
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list.shrink2(vec2(10.0, 6.0))).id_salt(("tr-ec", id.0)));
+    // (under the pills, which name the transition)
+    let settings = Rect::from_min_max(pos2(list.min.x, list.min.y + header_h), list.max).shrink2(vec2(10.0, 6.0));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(settings).id_salt(("tr-ec", id.0)));
     child.set_clip_rect(list.intersect(ui.clip_rect()));
-    child.label(RichText::new(format!("{seq_name} · {name}")).color(t.text_dim));
-    child.add_space(4.0);
     // the line under each row, as for a clip's effects (#640): halfway into the row spacing
     let row_line = |ui: &egui::Ui| {
         let y = ui.cursor().top() - 4.0;

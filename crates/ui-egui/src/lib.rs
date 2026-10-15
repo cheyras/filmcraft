@@ -1731,6 +1731,7 @@ impl FilmcraftApp {
         let ctx = ui.ctx().clone();
         self.auto.begin_frame();
         panels::metadata::follow_selection(self);
+        panels::fx_target::sync(self);
         self.frames.set_context(&ctx);
         self.session.poll_persistence();
         panels::trim_monitor::advance(self, &ctx);

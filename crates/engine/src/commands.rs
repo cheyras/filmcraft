@@ -3224,8 +3224,8 @@ fn build() -> Vec<CommandSpec> {
             "Move Keyframes",
             [],
             None,
-            r#"{"keyframes":[{"clip":id,"effect":index,"param":str,"mask":n?,"time":mediaTicks}],"delta":timelineTicks}"#,
-            has_seq,
+            r#"{"keyframes":[{"clip":id,"effect":index,"param":str,"mask":n?,"time":mediaTicks}],"delta":timelineTicks,"item":id? (the keys are source clip effects of this media item, each key's `clip` is the same id; `delta` is then media ticks)}"#,
+            always,
             crate::keyframe_move::move_many
         ),
         cmd!(

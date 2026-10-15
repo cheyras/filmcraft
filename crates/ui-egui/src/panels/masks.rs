@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 
 use crate::FilmcraftApp;
 use crate::icons::{self, Icon};
+use crate::panels::fx_target::Fx;
 use crate::theme::Tokens;
 
 const ROW_H: f32 = 22.0;
@@ -149,13 +150,13 @@ pub(crate) fn effect_rows(
             continue;
         }
         for pd in defs {
-            crate::panels::effect_controls::param_row(app, ui, body, clip, idx, e, Some(k), pd, mt, actions, lane, lx, it, keys);
+            crate::panels::effect_controls::param_row(app, ui, body, Fx::clip(clip), idx, e, Some(k), pd, mt, actions, lane, lx, it, keys);
             if pd.id != "path"
-                && app.ui.expanded_fx.contains(&crate::panels::effect_controls::graph_key(clip, idx, &format!("mask{k}.{}", pd.id)))
+                && app.ui.expanded_fx.contains(&crate::panels::effect_controls::graph_key(clip.0, idx, &format!("mask{k}.{}", pd.id)))
                 && let Some(param) = m.param(pd.id)
                 && param.is_animated()
             {
-                crate::panels::effect_controls::graph_rows(app, ui, body, clip, idx, Some(k), pd, param, lane, it, actions);
+                crate::panels::effect_controls::graph_rows(app, ui, body, Fx::clip(clip), idx, Some(k), pd, param, lane, it, actions);
             }
         }
         // Inverted
