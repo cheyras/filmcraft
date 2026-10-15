@@ -151,7 +151,10 @@ effects, wherever the media is used (subclips share it): `render::clip_effects` 
 (source effects, then the clip's) that the CPU renderer, the GPU plan, the effect environment of
 temporal effects and the render-bar cost walk, so a source effect is exactly the same effect on the
 clip. `render_item` (Source Monitor, bin thumbnails) applies it to the shown frame at its media time.
-Commands take `item` beside `clip` (`engine::source_effects`).
+Commands take `item` beside `clip` (`engine::source_effects`). `Project::media_view` gives a media's
+source effects as a clip-shaped view (start 0, normal speed), which the engine edits through and
+Effect Controls draws; Lumetri Color and Effect Controls pick between a clip and the Source
+Monitor's media with `ui-egui::panels::fx_target`.
 EffectInstance
 ├─ effect id, enabled, params: id → constant value or keyframe track
 └─ masks: Vec<Mask>                  path (keyframable Bézier), feather, opacity, expansion, inverted, mode

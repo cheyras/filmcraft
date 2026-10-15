@@ -878,7 +878,6 @@
 	Generate Keyframes	生成关键帧
 	Clip Volume	剪辑音量
 	(no clip selected)	（未选择剪辑）
-	Master · {name}	主 · {name}
 	Add Lumetri Color to clip	向剪辑添加 Lumetri 颜色
 	Input LUT	输入 LUT
 	Color	颜色
@@ -3585,3 +3584,12 @@
 	Shows the version, community links and credits in a FilmCraft window.	在 FilmCraft 窗口中显示版本、社区链接和致谢。
 	Couldn't open your web browser	无法打开网页浏览器
 	Open this address in your browser yourself:	请自行在浏览器中打开此地址：
+	Open media in the Source monitor to edit its source clip effects	在源监视器中打开媒体，以编辑其源剪辑效果
+	Select a clip in the Timeline to edit its effects	在时间轴中选择一个剪辑以编辑其效果
+	Effect presets apply to clips in the Timeline, not to source clips	效果预设应用于时间轴中的剪辑，而不是源剪辑
+	Select a clip or open media in the Source monitor	选择一个剪辑，或在源监视器中打开媒体
+	Add Lumetri Color to source	向源添加 Lumetri 颜色
+	Lumetri Color {n}	Lumetri 颜色 {n}
+	Clip effects: {n}	剪辑效果：{n}
+	Fixed effects changed	固定效果已更改
+	Source clip effects: {n}	源剪辑效果：{n}

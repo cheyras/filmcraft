@@ -888,7 +888,6 @@
 	Generate Keyframes	Générer des images clés
 	Clip Volume	Volume du clip
 	(no clip selected)	(aucun clip sélectionné)
-	Master · {name}	Maître · {name}
 	Add Lumetri Color to clip	Ajouter l'effet Couleur Lumetri au clip
 	Input LUT	LUT d'entrée
 	Color	Couleur
@@ -3577,3 +3576,12 @@
 	Export the labels to a preset file…	Exporter les étiquettes dans un fichier de paramètre prédéfini…
 	Show the presets folder	Afficher le dossier des paramètres prédéfinis
 	Delete this preset	Supprimer ce paramètre prédéfini
+	Open media in the Source monitor to edit its source clip effects	Ouvrez un média dans le moniteur source pour modifier les effets de son clip source
+	Select a clip in the Timeline to edit its effects	Sélectionnez un clip dans la Timeline pour modifier ses effets
+	Effect presets apply to clips in the Timeline, not to source clips	Les préréglages d'effets s'appliquent aux clips de la Timeline, pas aux clips source
+	Select a clip or open media in the Source monitor	Sélectionnez un clip ou ouvrez un média dans le moniteur source
+	Add Lumetri Color to source	Ajouter l'effet Couleur Lumetri à la source
+	Lumetri Color {n}	Couleur Lumetri {n}
+	Clip effects: {n}	Effets du clip : {n}
+	Fixed effects changed	Effets fixes modifiés
+	Source clip effects: {n}	Effets du clip source : {n}

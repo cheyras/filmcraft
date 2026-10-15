@@ -1,5 +1,15 @@
 //! Lumetri Color panel: Basic Correction, Creative, Curves (RGB + hue curves), Color Wheels,
-//! HSL Secondary, Vignette — editing the selected clip's Lumetri effect through engine commands.
+//! HSL Secondary, Vignette — editing a Lumetri Color through engine commands. A row of pills at
+//! the top picks what it edits (see [`crate::panels::fx_target`]): the source clip effects of the
+//! media open in the Source Monitor, or the effects of the selected clip in the sequence. Under
+//! them an instance menu picks which Lumetri Color of that target (`Lumetri Color`, `Lumetri
+//! Color 2`…), with the effect's fx bypass and reset beside it; a target without one offers to
+//! add it. In the Source target the keyframes are in media time at the Source Monitor's playhead,
+//! and Color Match (which matches a clip to a frame of the sequence) is not offered.
+//!
+//! Automation ids: `lumetri.target.source`, `lumetri.target.sequence`, `lumetri.instance` (with
+//! `lumetri.instance.option.<n>` while open), `lumetri.fx`, `lumetri.reset`, `lumetri.add`,
+//! `lumetri.<input_lut|look_lut>`, `lumetri.switch.<section>`, `lumetri.section.<section>`.
 //!
 //! In an HDR sequence (Rec. 2100 PQ / HLG working space) Basic Correction shows HDR White and
 //! HDR Specular and Curves shows HDR Range (cd/m²): the sliders and curves then span 0 … that
@@ -16,6 +26,7 @@ use serde_json::{Value, json};
 use crate::FilmcraftApp;
 use crate::icons::{self, Icon};
 use crate::native_dialogs::FileDialog;
+use crate::panels::fx_target::{self, Fx, Pick};
 use crate::theme::Tokens;
 
 type Actions = Vec<Value>;
@@ -28,52 +39,91 @@ fn selected(app: &FilmcraftApp) -> Option<(ClipId, filmcraft_project::TrackItem)
     })
 }
 
+/// The name of the `n`th Lumetri Color of a target (0-based): `Lumetri Color`, `Lumetri Color 2`…
+fn instance_name(n: usize) -> String {
+    if n == 0 { crate::i18n::t("Lumetri Color").to_string() } else { tlf!("Lumetri Color {n}", n = n + 1) }
+}
+
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
-    let Some((clip, it)) = selected(app) else {
-        crate::dock::placeholder(ui, rect, &t, tl!("(no clip selected)"));
-        return;
+    let clip = selected(app);
+    let area = rect.shrink2(vec2(12.0, 6.0));
+    let pick = fx_target::pills(app, ui, Rect::from_min_size(area.min, vec2(area.width(), 24.0)), "lumetri", clip.as_ref().map(|(_, it)| it.name.as_str()));
+    let body = Rect::from_min_max(pos2(area.min.x, area.min.y + 24.0 + 8.0), area.max);
+    // what is edited: its effects, and the media time the keyframed values are read at
+    let (fx, effects, mt) = match (pick.active, &pick.source, &clip) {
+        (Some(Pick::Source), Some(src), _) => {
+            (Fx::item(src.media), app.session.project.source_effects_of(src.media).to_vec(), app.session.state.source_playhead)
+        }
+        (Some(Pick::Sequence), _, Some((c, it))) => {
+            let ph = app.session.playhead();
+            (Fx::clip(*c), it.effects.clone(), it.source_time_at(ph.clamp(it.start, (it.end() - Tick(1)).max(it.start))))
+        }
+        _ => {
+            crate::dock::placeholder(ui, body, &t, tl!("Select a clip or open media in the Source monitor"));
+            return;
+        }
     };
-    let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(12.0, 6.0))).id_salt("lumetri2"));
-    let Some(idx) = it.effects.iter().position(|e| e.effect == "lumetri") else {
-        bui.add_space(8.0);
-        bui.label(egui::RichText::new(tlf!("Master · {name}", name = it.name)).color(t.text_dim));
-        bui.add_space(8.0);
-        if bui.button(tl!("Add Lumetri Color to clip")).clicked() {
-            let _ = app.session.execute("effects.apply", json!({"clips": [clip.0], "effect": "lumetri"}));
+    let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(body).id_salt("lumetri2"));
+    let lumetri: Vec<usize> = effects.iter().enumerate().filter(|(_, e)| e.effect == "lumetri").map(|(i, _)| i).collect();
+    if lumetri.is_empty() {
+        let label = if fx.source { tl!("Add Lumetri Color to source") } else { tl!("Add Lumetri Color to clip") };
+        let b = bui.button(label);
+        app.auto.add_response("lumetri.add", &b, label);
+        if b.clicked() {
+            let result = app.session.execute("effects.apply", fx.with(json!({"effect": "lumetri"})));
+            if let Err(err) = result {
+                app.ui.status = err.to_string();
+            }
         }
         return;
-    };
-    let e = it.effects[idx].clone();
+    }
+    let instance = fx_target::instance(app, fx, lumetri.len());
+    let Some(&idx) = lumetri.get(instance) else { return };
+    let Some(e) = effects.get(idx).cloned() else { return };
     // HDR mode: the sequence's working space is Rec. 2100 PQ or HLG
     let hdr = app.session.active_sequence().is_some_and(|q| q.settings.color.working.is_hdr());
-    let mut auto_rows: Vec<(String, Rect, &'static str)> = Vec::new();
-    let ph = app.session.playhead();
-    let mt = it.source_time_at(ph.clamp(it.start, it.end() - Tick(1)));
     let mut actions: Actions = Vec::new();
-    // header: clip context + fx toggle
-    // the fx toggle is laid out first so a long clip name is truncated instead of widening the panel
+    // the effect row: the instance menu, the fx bypass and the reset button (laid out from the right,
+    // so a long name is cut off by the menu instead of widening the panel)
     bui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let fx = ui.add(egui::Button::new(egui::RichText::new("fx").italics().color(if e.enabled { t.text } else { t.text_faint })).frame(false));
-            if fx.clicked() {
-                let _ = app.session.execute("effects.toggleEnabled", json!({"clip": clip.0, "index": idx}));
+            let rr = icons::button(ui, Icon::Reset, 20.0, false, &t, tl!("Reset Effect"));
+            app.auto.add_response("lumetri.reset", &rr, "Reset Effect");
+            if rr.clicked() {
+                let _ = app.session.execute("effects.reset", fx.with(json!({"index": idx})));
             }
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add(egui::Label::new(egui::RichText::new(tlf!("Master · {name}", name = it.name)).color(t.text_dim)).truncate());
-            });
+            let fxb = ui.add(egui::Button::new(egui::RichText::new("fx").italics().color(if e.enabled { t.text } else { t.text_faint })).frame(false));
+            app.auto.add_response("lumetri.fx", &fxb, "fx");
+            if fxb.clicked() {
+                let _ = app.session.execute("effects.toggleEnabled", fx.with(json!({"index": idx})));
+            }
+            let combo = egui::ComboBox::from_id_salt("lumetri-instance")
+                .selected_text(instance_name(instance))
+                .truncate()
+                .width((ui.available_width() - 4.0).max(60.0))
+                .show_ui(ui, |ui| {
+                    for n in 0..lumetri.len() {
+                        let o = ui.selectable_label(n == instance, instance_name(n));
+                        app.auto.add(&format!("lumetri.instance.option.{n}"), o.rect, &instance_name(n));
+                        if o.clicked() {
+                            fx_target::set_instance(app, n);
+                        }
+                    }
+                });
+            app.auto.add_response("lumetri.instance", &combo.response, &instance_name(instance));
         });
     });
-    let set = |actions: &mut Actions, param: &str, v: Value| actions.push(json!({"clip": clip.0, "effect": idx, "param": param, "value": v}));
+    let set = |actions: &mut Actions, param: &str, v: Value| actions.push(fx.with(json!({"effect": idx, "param": param, "value": v})));
     let mut sections: Vec<&'static str> = Vec::new();
     let mut lut_actions: Vec<(&'static str, Value)> = Vec::new();
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut bui, |ui| {
         if open_section(ui, app, &e, "Basic Correction", "basic_on", "basic", &mut sections) {
             lut_combo(ui, app, &e, "input_lut", tl!("Input LUT"), true, &mut lut_actions);
             sub(ui, &t, tl!("Color"));
-            slider(ui, &e, mt, "temperature", tl!("Temperature"), Some(Gradient::Temp), &t, &mut actions, clip, idx);
-            slider(ui, &e, mt, "tint", tl!("Tint"), Some(Gradient::Tint), &t, &mut actions, clip, idx);
-            slider(ui, &e, mt, "saturation", tl!("Saturation"), None, &t, &mut actions, clip, idx);
+            slider(ui, &mut app.auto, &e, mt, "temperature", tl!("Temperature"), Some(Gradient::Temp), &t, &mut actions, fx, idx);
+            slider(ui, &mut app.auto, &e, mt, "tint", tl!("Tint"), Some(Gradient::Tint), &t, &mut actions, fx, idx);
+            slider(ui, &mut app.auto, &e, mt, "saturation", tl!("Saturation"), None, &t, &mut actions, fx, idx);
             sub(ui, &t, tl!("Light"));
             for (id, label) in [
                 ("exposure", tl!("Exposure")),
@@ -83,13 +133,12 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 ("whites", tl!("Whites")),
                 ("blacks", tl!("Blacks")),
             ] {
-                slider(ui, &e, mt, id, label, None, &t, &mut actions, clip, idx);
+                slider(ui, &mut app.auto, &e, mt, id, label, None, &t, &mut actions, fx, idx);
             }
             if hdr {
                 sub(ui, &t, tl!("HDR"));
                 for (id, label) in [("hdr_white", tl!("HDR White")), ("hdr_specular", tl!("HDR Specular"))] {
-                    let r = slider(ui, &e, mt, id, label, None, &t, &mut actions, clip, idx);
-                    auto_rows.push((format!("lumetri.param.{id}"), r, label));
+                    slider(ui, &mut app.auto, &e, mt, id, label, None, &t, &mut actions, fx, idx);
                 }
             }
         }
@@ -102,10 +151,11 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 .and_then(|d| d.param("look"))
                 .and_then(|p| if let filmcraft_project::ParamKind::Choice(o) = p.kind { Some(o) } else { None })
                 .unwrap_or(&[]);
+            let mut look_rect = Rect::NOTHING;
             ui.horizontal(|ui| {
                 ui.add_sized(vec2(110.0, 20.0), egui::Label::new(egui::RichText::new(tl!("Look")).color(t.text_dim)));
                 let mut sel = look;
-                egui::ComboBox::from_id_salt("lumetri-look")
+                let combo = egui::ComboBox::from_id_salt("lumetri-look")
                     .selected_text(opts.get(look).map_or(tl!("None"), |o| crate::i18n::t(o)))
                     .width((ui.available_width() - 40.0).max(60.0))
                     .show_ui(ui, |ui| {
@@ -115,14 +165,16 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                             }
                         }
                     });
+                look_rect = combo.response.rect;
             });
+            app.auto.add("lumetri.look", look_rect, tl!("Look"));
             lut_combo(ui, app, &e, "look_lut", tl!("Look LUT"), false, &mut lut_actions);
-            slider(ui, &e, mt, "look_intensity", tl!("Intensity"), None, &t, &mut actions, clip, idx);
+            slider(ui, &mut app.auto, &e, mt, "look_intensity", tl!("Intensity"), None, &t, &mut actions, fx, idx);
             sub(ui, &t, tl!("Adjustments"));
             for (id, label) in
                 [("faded_film", tl!("Faded Film")), ("sharpen", tl!("Sharpen")), ("vibrance", tl!("Vibrance")), ("creative_sat", tl!("Saturation"))]
             {
-                slider(ui, &e, mt, id, label, None, &t, &mut actions, clip, idx);
+                slider(ui, &mut app.auto, &e, mt, id, label, None, &t, &mut actions, fx, idx);
             }
         }
         if open_section(ui, app, &e, "Curves", "curves_on", "curves", &mut sections) {
@@ -150,10 +202,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 ("curve_green", Color32::from_rgb(80, 200, 90)),
                 ("curve_blue", Color32::from_rgb(80, 130, 250)),
             ][ch];
-            curve_editor(ui, &e, id, false, col, &t, &mut actions, clip, idx);
+            curve_editor(ui, &mut app.auto, &e, id, false, col, &t, &mut actions, fx, idx);
             if hdr {
-                let r = slider(ui, &e, mt, "curves_hdr_range", tl!("HDR Range"), None, &t, &mut actions, clip, idx);
-                auto_rows.push(("lumetri.param.curves_hdr_range".into(), r, "HDR Range"));
+                slider(ui, &mut app.auto, &e, mt, "curves_hdr_range", tl!("HDR Range"), None, &t, &mut actions, fx, idx);
             }
             sub(ui, &t, tl!("Hue Saturation Curves"));
             for (id, label) in [
@@ -164,7 +215,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 ("sat_vs_sat", tl!("Sat vs Sat")),
             ] {
                 ui.label(egui::RichText::new(label).color(t.text_dim));
-                curve_editor(ui, &e, id, true, Color32::WHITE, &t, &mut actions, clip, idx);
+                curve_editor(ui, &mut app.auto, &e, id, true, Color32::WHITE, &t, &mut actions, fx, idx);
             }
         }
         if open_section(ui, app, &e, "Color Wheels & Match", "wheels_on", "wheels", &mut sections) {
@@ -177,15 +228,17 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 ] {
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new(label).color(t.text_dim));
-                        color_wheel(ui, &e, mt, id, lid, w, &t, &mut actions, clip, idx);
+                        color_wheel(ui, &mut app.auto, &e, mt, id, lid, w, &t, &mut actions, fx, idx);
                     });
                 }
             });
-            match_controls(ui, app, &mut lut_actions);
+            if !fx.source {
+                match_controls(ui, app, &mut lut_actions);
+            }
         }
         if open_section(ui, app, &e, "HSL Secondary", "hsl_on", "hsl", &mut sections) {
             sub(ui, &t, tl!("Key"));
-            slider(ui, &e, mt, "hsl_hue", tl!("Hue"), Some(Gradient::Hue), &t, &mut actions, clip, idx);
+            slider(ui, &mut app.auto, &e, mt, "hsl_hue", tl!("Hue"), Some(Gradient::Hue), &t, &mut actions, fx, idx);
             for (id, label) in [
                 ("hsl_hue_range", tl!("Hue Range")),
                 ("hsl_sat_min", tl!("Saturation Min")),
@@ -193,34 +246,36 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 ("hsl_luma_max", tl!("Luma Max")),
                 ("hsl_soft", tl!("Soften")),
             ] {
-                slider(ui, &e, mt, id, label, None, &t, &mut actions, clip, idx);
+                slider(ui, &mut app.auto, &e, mt, id, label, None, &t, &mut actions, fx, idx);
             }
             let mask = match e.param("hsl_show_mask").map(|p| &p.value) {
                 Some(ParamValue::Choice(c)) => *c as usize,
                 _ => 0,
             };
+            let mut mask_rect = Rect::NOTHING;
             ui.horizontal(|ui| {
                 ui.add_sized(vec2(110.0, 20.0), egui::Label::new(egui::RichText::new(tl!("Show Mask")).color(t.text_dim)));
                 let mut sel = mask;
                 let modes = [tl!("Off"), tl!("Color/Gray"), tl!("Color/Black"), tl!("White/Black")];
-                egui::ComboBox::from_id_salt("hsl-mask").selected_text(modes[mask.min(3)]).show_ui(ui, |ui| {
+                let combo = egui::ComboBox::from_id_salt("hsl-mask").selected_text(modes[mask.min(3)]).show_ui(ui, |ui| {
                     for (i, o) in modes.iter().enumerate() {
                         if ui.selectable_value(&mut sel, i, *o).changed() {
                             set(&mut actions, "hsl_show_mask", json!(i));
                         }
                     }
                 });
+                mask_rect = combo.response.rect;
             });
+            app.auto.add("lumetri.hsl_show_mask", mask_rect, tl!("Show Mask"));
             sub(ui, &t, tl!("Refine"));
             for (id, label) in [("hsl_denoise", tl!("Denoise")), ("hsl_blur", tl!("Blur"))] {
-                let r = slider(ui, &e, mt, id, label, None, &t, &mut actions, clip, idx);
-                auto_rows.push((format!("lumetri.param.{id}"), r, label));
+                slider(ui, &mut app.auto, &e, mt, id, label, None, &t, &mut actions, fx, idx);
             }
             sub(ui, &t, tl!("Correction"));
-            slider(ui, &e, mt, "hsl_temp", tl!("Temperature"), Some(Gradient::Temp), &t, &mut actions, clip, idx);
-            slider(ui, &e, mt, "hsl_tint", tl!("Tint"), Some(Gradient::Tint), &t, &mut actions, clip, idx);
-            slider(ui, &e, mt, "hsl_sat", tl!("Saturation"), None, &t, &mut actions, clip, idx);
-            slider(ui, &e, mt, "hsl_hue_shift", tl!("Hue Shift"), Some(Gradient::Hue), &t, &mut actions, clip, idx);
+            slider(ui, &mut app.auto, &e, mt, "hsl_temp", tl!("Temperature"), Some(Gradient::Temp), &t, &mut actions, fx, idx);
+            slider(ui, &mut app.auto, &e, mt, "hsl_tint", tl!("Tint"), Some(Gradient::Tint), &t, &mut actions, fx, idx);
+            slider(ui, &mut app.auto, &e, mt, "hsl_sat", tl!("Saturation"), None, &t, &mut actions, fx, idx);
+            slider(ui, &mut app.auto, &e, mt, "hsl_hue_shift", tl!("Hue Shift"), Some(Gradient::Hue), &t, &mut actions, fx, idx);
         }
         if open_section(ui, app, &e, "Vignette", "vignette_on", "vignette", &mut sections) {
             for (id, label) in [
@@ -229,20 +284,15 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 ("vignette_roundness", tl!("Roundness")),
                 ("vignette_feather", tl!("Feather")),
             ] {
-                slider(ui, &e, mt, id, label, None, &t, &mut actions, clip, idx);
+                slider(ui, &mut app.auto, &e, mt, id, label, None, &t, &mut actions, fx, idx);
             }
         }
         ui.add_space(20.0);
     });
-    for (id, r, label) in auto_rows {
-        if r.is_positive() {
-            app.auto.add(&id, r, label);
-        }
-    }
     // a dragged value is one undo step, as in Effect Controls
     crate::panels::effect_controls::run(app, ui.ctx(), actions.into_iter().map(|a| ("effects.setParam".to_string(), a)).collect());
     for sec in sections {
-        if let Err(err) = app.session.execute("lumetri.setSection", json!({"clip": clip.0, "section": sec})) {
+        if let Err(err) = app.session.execute("lumetri.setSection", fx.with(json!({"effect": idx, "section": sec}))) {
             app.ui.status = err.to_string();
         }
     }
@@ -256,17 +306,17 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             continue;
         }
         if p.get("browse").is_some() {
-            let (cmd, clip) = (cmd.to_string(), clip.0);
+            let cmd = cmd.to_string();
             app.pick_ui(FileDialog::open_file(tl!("LUT"), &["cube", "3dl"]), move |app, paths| {
                 let Some(path) = paths.into_iter().next() else { return };
-                if let Err(err) = app.session.execute(&cmd, json!({"path": path, "clip": clip})) {
+                if let Err(err) = app.session.execute(&cmd, fx.with(json!({"path": path, "effect": idx}))) {
                     app.ui.status = err.to_string();
                 }
             });
             continue;
         }
-        p["clip"] = json!(clip.0);
-        if let Err(err) = app.session.execute(cmd, p) {
+        p["effect"] = json!(idx);
+        if let Err(err) = app.session.execute(cmd, fx.with(p)) {
             app.ui.status = err.to_string();
         }
     }
@@ -381,6 +431,7 @@ enum Gradient {
 #[allow(clippy::too_many_arguments)]
 fn slider(
     ui: &mut egui::Ui,
+    auto: &mut crate::automation::Registry,
     e: &EffectInstance,
     mt: Tick,
     id: &str,
@@ -388,7 +439,7 @@ fn slider(
     grad: Option<Gradient>,
     t: &Tokens,
     actions: &mut Actions,
-    clip: ClipId,
+    fx: Fx,
     idx: usize,
 ) -> Rect {
     let Some(pd) = e.def().and_then(|d| d.param(id)) else { return Rect::NOTHING };
@@ -421,7 +472,7 @@ fn slider(
     let f = ((v - soft_min) / (soft_max - soft_min)).clamp(0.0, 1.0) as f32;
     let kx = track.min.x + f * track.width();
     let hit = Rect::from_min_max(pos2(track.min.x - 6.0, row.min.y), pos2(track.max.x + 6.0, row.max.y));
-    let resp = ui.interact(hit, egui::Id::new(("lslider", clip.0, id)), Sense::click_and_drag());
+    let resp = ui.interact(hit, egui::Id::new(("lslider", fx.id, idx, id)), Sense::click_and_drag());
     ui.painter().circle_filled(pos2(kx, track.center().y), 5.0, t.panel_bg);
     ui.painter().circle_stroke(
         pos2(kx, track.center().y),
@@ -444,9 +495,12 @@ fn slider(
             .layout(egui::Layout::right_to_left(egui::Align::Center)),
     );
     let (_, nv) =
-        crate::widgets::hot_number(&mut vui, egui::Id::new(("lval", clip.0, id)), v, (soft_max - soft_min) / 300.0, (min, max), decimals as usize, "", t);
+        crate::widgets::hot_number(&mut vui, egui::Id::new(("lval", fx.id, idx, id)), v, (soft_max - soft_min) / 300.0, (min, max), decimals as usize, "", t);
     if let Some(nv) = out.or(nv) {
-        actions.push(json!({"clip": clip.0, "effect": idx, "param": id, "value": (nv * 10f64.powi(decimals as i32)).round() / 10f64.powi(decimals as i32)}));
+        actions.push(fx.with(json!({"effect": idx, "param": id, "value": (nv * 10f64.powi(decimals as i32)).round() / 10f64.powi(decimals as i32)})));
+    }
+    if row.is_positive() {
+        auto.add(&format!("lumetri.param.{id}"), row, label);
     }
     row
 }
@@ -458,11 +512,23 @@ fn lerp_col(a: Color32, b: Color32, f: f32) -> Color32 {
 
 /// Curve editor: drag points, click the curve to add, double-click a point to remove.
 #[allow(clippy::too_many_arguments)]
-fn curve_editor(ui: &mut egui::Ui, e: &EffectInstance, id: &str, hue: bool, col: Color32, t: &Tokens, actions: &mut Actions, clip: ClipId, idx: usize) {
+fn curve_editor(
+    ui: &mut egui::Ui,
+    auto: &mut crate::automation::Registry,
+    e: &EffectInstance,
+    id: &str,
+    hue: bool,
+    col: Color32,
+    t: &Tokens,
+    actions: &mut Actions,
+    fx: Fx,
+    idx: usize,
+) {
     let pts: Vec<[f32; 2]> = e.param(id).and_then(|p| p.value.as_curve().map(|c| c.to_vec())).unwrap_or_default();
     let w = ui.available_width().min(260.0);
     let h = if hue { w * 0.45 } else { w };
     let (area, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click_and_drag());
+    auto.add(&format!("lumetri.curve.{id}"), area, id);
     let p = ui.painter();
     p.rect_filled(area, 2.0, Color32::from_rgb(0x16, 0x16, 0x16));
     for i in 1..4 {
@@ -510,7 +576,7 @@ fn curve_editor(ui: &mut egui::Ui, e: &EffectInstance, id: &str, hue: bool, col:
     };
     let line: Vec<Pos2> = lut.iter().enumerate().map(|(i, y)| to_screen([i as f32 / 127.0, y.clamp(0.0, 1.0)])).collect();
     p.add(egui::Shape::line(line, Stroke::new(1.5, col)));
-    let drag_key = egui::Id::new(("curve-drag", clip.0, id));
+    let drag_key = egui::Id::new(("curve-drag", fx.id, idx, id));
     let mut dragging: Option<usize> = ui.data(|d| d.get_temp(drag_key));
     let mut new_pts = pts.clone();
     let mut changed = false;
@@ -561,16 +627,29 @@ fn curve_editor(ui: &mut egui::Ui, e: &EffectInstance, id: &str, hue: bool, col:
     });
     if changed {
         let v: Vec<Value> = new_pts.iter().map(|q| json!([q[0], q[1]])).collect();
-        actions.push(json!({"clip": clip.0, "effect": idx, "param": id, "value": v}));
+        actions.push(fx.with(json!({"effect": idx, "param": id, "value": v})));
     }
     ui.add_space(6.0);
 }
 
 /// Colour wheel: hue ring, draggable puck (offset), lightness slider on the left.
 #[allow(clippy::too_many_arguments)]
-fn color_wheel(ui: &mut egui::Ui, e: &EffectInstance, mt: Tick, id: &str, lid: &str, size: f32, t: &Tokens, actions: &mut Actions, clip: ClipId, idx: usize) {
+fn color_wheel(
+    ui: &mut egui::Ui,
+    auto: &mut crate::automation::Registry,
+    e: &EffectInstance,
+    mt: Tick,
+    id: &str,
+    lid: &str,
+    size: f32,
+    t: &Tokens,
+    actions: &mut Actions,
+    fx: Fx,
+    idx: usize,
+) {
     let v = e.param(id).map(|p| p.vec2_at(mt)).unwrap_or_default();
     let (area, resp) = ui.allocate_exact_size(vec2(size, size), Sense::click_and_drag());
+    auto.add(&format!("lumetri.wheel.{id}"), area, id);
     let c = area.center() + vec2(6.0, 0.0);
     let r_out = size / 2.0 - 4.0;
     let r_in = r_out - 10.0;
@@ -601,10 +680,10 @@ fn color_wheel(ui: &mut egui::Ui, e: &EffectInstance, mt: Tick, id: &str, lid: &
         let d = (pos - c) / (r_in - 4.0);
         let len = d.length().min(1.0);
         let dir = if d.length() > 1e-6 { d / d.length() } else { d };
-        actions.push(json!({"clip": clip.0, "effect": idx, "param": id, "value": [dir.x * len, -dir.y * len]}));
+        actions.push(fx.with(json!({"effect": idx, "param": id, "value": [dir.x * len, -dir.y * len]})));
     }
     if resp.double_clicked() {
-        actions.push(json!({"clip": clip.0, "effect": idx, "param": id, "value": [0.0, 0.0]}));
+        actions.push(fx.with(json!({"effect": idx, "param": id, "value": [0.0, 0.0]})));
     }
     // lightness slider (vertical) at the wheel's left edge
     let l = e.param(lid).map(|p| p.f64_at(mt)).unwrap_or(0.0) as f32;
@@ -612,12 +691,12 @@ fn color_wheel(ui: &mut egui::Ui, e: &EffectInstance, mt: Tick, id: &str, lid: &
     p.rect_filled(track, 2.0, Color32::from_rgb(0x4b, 0x4b, 0x4b));
     let ky = track.center().y - l / 100.0 * track.height() / 2.0;
     p.circle_stroke(pos2(track.center().x, ky), 4.0, Stroke::new(1.5, Color32::from_rgb(0xb0, 0xb0, 0xb0)));
-    let lr = ui.interact(track.expand2(vec2(6.0, 0.0)), egui::Id::new(("wl", clip.0, lid)), Sense::click_and_drag());
+    let lr = ui.interact(track.expand2(vec2(6.0, 0.0)), egui::Id::new(("wl", fx.id, idx, lid)), Sense::click_and_drag());
     if (lr.dragged() || lr.clicked())
         && let Some(pos) = lr.interact_pointer_pos()
     {
         let nv = ((track.center().y - pos.y) / (track.height() / 2.0) * 100.0).clamp(-100.0, 100.0);
-        actions.push(json!({"clip": clip.0, "effect": idx, "param": lid, "value": nv}));
+        actions.push(fx.with(json!({"effect": idx, "param": lid, "value": nv})));
     }
     let _ = StrokeKind::Inside;
 }

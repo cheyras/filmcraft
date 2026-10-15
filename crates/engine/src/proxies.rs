@@ -15,6 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use filmcraft_color::{ColorPipeline, ColorSpace, WorkingSpace};
 use filmcraft_export::{ExportSettings, Format, Progress, Report};
 use filmcraft_media::{MediaKind, SharedSource};
 use filmcraft_project::{IngestAction, ItemId, ItemKind, MediaClip, MediaRef, Project, SequenceSettings, TrackKind};
@@ -86,6 +87,41 @@ pub struct PendingJob {
     pub outputs: Arc<Mutex<Vec<(ItemId, String)>>>,
 }
 
+/// The media as a transcode reads it, and the colour pipeline it runs through.
+///
+/// A transcode stands in for the media (a proxy, an ingest copy, a Project Manager copy): the
+/// project keeps the media's Interpret Footage colour space and its source clip effects, and
+/// playback applies them again to whatever file it reads. So the copy must hold the footage as
+/// the file has it, not as it looks:
+///
+/// - **Source clip effects** are dropped.
+/// - **An Interpret Footage colour space** is dropped too, and the pixels pass through untouched
+///   (the transcode reads them as Rec. 709, which is the identity here), because the override
+///   says what the pixels *are* whatever the file's tags say. Log footage tagged BT.2020 would
+///   otherwise be gamut-mapped before playback interprets it as log.
+/// - **Without an override**, a file signalled as PQ or HLG is transcoded in that HDR space, so the
+///   copy is still PQ/HLG (and signals it), and an HDR sequence plays it as HDR. In a Rec. 709
+///   pipeline it would be tone mapped into an SDR copy, which looks the same in an SDR sequence and
+///   washed out in an HDR one. Other files are read as they signal (Rec. 709 passes through; an SDR
+///   file with wide primaries is mapped to Rec. 709, as an SDR sequence maps it at playback).
+fn plain_copy(clip: &MediaClip) -> (MediaClip, ColorPipeline) {
+    let mut c = clip.clone();
+    c.offline = false;
+    c.proxy = None;
+    c.source_effects.clear();
+    let signalled = clip.info.video.as_ref().map(|v| ColorSpace::from_info(&v.color));
+    let working = match (c.interpret.color_space, signalled) {
+        (Some(_), _) => WorkingSpace::Rec709,
+        (None, Some(ColorSpace::Rec2100Pq)) => WorkingSpace::Rec2100Pq,
+        (None, Some(ColorSpace::Rec2100Hlg)) => WorkingSpace::Rec2100Hlg,
+        _ => WorkingSpace::Rec709,
+    };
+    if c.interpret.color_space.is_some() {
+        c.interpret.color_space = Some(ColorSpace::Rec709);
+    }
+    (c, ColorPipeline { working, ..ColorPipeline::REC709 })
+}
+
 /// Transcode `range` (whole media when None) of one media clip to `out` with `preset`, blocking.
 /// `progress.total` is the caller's; this adds one per frame to `progress.done`.
 pub fn transcode(
@@ -99,7 +135,8 @@ pub fn transcode(
 ) -> std::result::Result<Report, String> {
     let info = &clip.info;
     let rate = clip.frame_rate();
-    let mut st = SequenceSettings::default();
+    let (c, color) = plain_copy(clip);
+    let mut st = SequenceSettings { color, ..Default::default() };
     if let Some(v) = &info.video {
         st.width = v.width;
         st.height = v.height;
@@ -109,9 +146,6 @@ pub fn transcode(
     st.frame_rate = rate;
     st.sample_rate = info.audio().map_or(48_000, |a| a.sample_rate.max(8000));
     let mut p = Project::new("transcode");
-    let mut c = clip.clone();
-    c.offline = false;
-    c.proxy = None;
     let item = p.add_item(name, filmcraft_project::Label::Iris, ItemKind::Media(c), None);
     let has_v = info.video.is_some();
     let has_a = info.has_audio();

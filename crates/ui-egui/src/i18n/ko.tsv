@@ -1795,7 +1795,6 @@
 	Master Amplitude	마스터 진폭
 	Master Gain	마스터 게인
 	Master volume: use the Audio Track Mixer	마스터 볼륨: 오디오 트랙 믹서 사용
-	Master · {name}	마스터 · {name}
 	Mastering	마스터링
 	Match file properties:	일치시킬 파일 속성:
 	Match Frame	프레임 일치
@@ -3596,3 +3595,12 @@
 	Shows the version, community links and credits in a FilmCraft window.	FilmCraft 창에 버전, 커뮤니티 링크, 제작진을 보여 줍니다.
 	Couldn't open your web browser	웹 브라우저를 열 수 없습니다
 	Open this address in your browser yourself:	이 주소를 브라우저에서 직접 여세요:
+	Open media in the Source monitor to edit its source clip effects	소스 모니터에서 미디어를 열어 소스 클립 효과를 편집하세요
+	Select a clip in the Timeline to edit its effects	타임라인에서 클립을 선택하여 효과를 편집하세요
+	Effect presets apply to clips in the Timeline, not to source clips	효과 사전 설정은 타임라인의 클립에 적용되며 소스 클립에는 적용되지 않습니다
+	Select a clip or open media in the Source monitor	클립을 선택하거나 소스 모니터에서 미디어를 여세요
+	Add Lumetri Color to source	소스에 Lumetri Color 추가
+	Lumetri Color {n}	Lumetri 색상 {n}
+	Clip effects: {n}	클립 효과: {n}
+	Fixed effects changed	고정 효과 변경됨
+	Source clip effects: {n}	소스 클립 효과: {n}

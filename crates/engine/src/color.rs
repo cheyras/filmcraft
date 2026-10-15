@@ -70,18 +70,23 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             "lumetri.setInputLut",
             "Set Input LUT",
             &[],
-            r#"{"clip":id?,"item":id? (a media item or subclip: its source clip effects get the Lumetri),"lut":"lib:<id>"|"builtin:<id>"|""?,"path":str?}"#,
+            r#"{"clip":id?,"item":id? (a media item or subclip: its source clip effects get the Lumetri),"effect":index? (of a Lumetri Color in the effect list; default the first),"lut":"lib:<id>"|"builtin:<id>"|""?,"path":str?}"#,
             always,
             |s, p| set_lut(s, p, "input_lut"),
         ),
-        spec("lumetri.setLook", "Set Creative Look", &[], r#"{"clip":id?,"item":id?,"lut":"lib:<id>"|"builtin:<id>"|""?,"path":str?}"#, always, |s, p| {
-            set_lut(s, p, "look_lut")
-        }),
+        spec(
+            "lumetri.setLook",
+            "Set Creative Look",
+            &[],
+            r#"{"clip":id?,"item":id?,"effect":index?,"lut":"lib:<id>"|"builtin:<id>"|""?,"path":str?}"#,
+            always,
+            |s, p| set_lut(s, p, "look_lut"),
+        ),
         spec(
             "lumetri.applyMatch",
             "Apply Match",
             &[],
-            r#"{"clip":id?,"referenceTime":ticks?|"referenceFrame":n?|"referenceTimecode":str?,"faceDetection":bool=true} (timeline clips only: `item` is refused)"#,
+            r#"{"clip":id?,"effect":index?,"referenceTime":ticks?|"referenceFrame":n?|"referenceTimecode":str?,"faceDetection":bool=true} (timeline clips only: `item` is refused)"#,
             always,
             apply_match,
         ),
@@ -89,7 +94,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             "lumetri.setSection",
             "Toggle Lumetri Section",
             &[],
-            r#"{"clip":id?,"item":id?,"section":"basic"|"creative"|"curves"|"wheels"|"hsl"|"vignette","on":bool?}"#,
+            r#"{"clip":id?,"item":id?,"effect":index?,"section":"basic"|"creative"|"curves"|"wheels"|"hsl"|"vignette","on":bool?}"#,
             always,
             set_section,
         ),
@@ -181,8 +186,34 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"path": path, "bytes": text.len()}))
 }
 
-/// The target clip and the index of its Lumetri effect (applying Lumetri when missing).
+/// The index (in an effect list) of the Lumetri Color a command names with `effect`, if it does.
+/// Several Lumetri Colors can share a clip or a media item; without `effect` a command takes the
+/// first. Whether the index is a Lumetri Color is for the caller to check against the list
+/// ([`lumetri_at`]).
+fn effect_index_p(p: &Value, cmd: &str) -> Result<Option<usize>> {
+    match p.get("effect") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_u64()
+            .and_then(|i| usize::try_from(i).ok())
+            .map(Some)
+            .ok_or_else(|| bad(cmd, "`effect` must be the index of a Lumetri Color in the effect list")),
+    }
+}
+
+/// `effects[at]`, which must be a Lumetri Color.
+fn lumetri_at(effects: &[filmcraft_project::EffectInstance], at: usize, cmd: &str) -> Result<usize> {
+    match effects.get(at) {
+        Some(e) if e.effect == "lumetri" => Ok(at),
+        Some(_) => Err(bad(cmd, format!("effect {at} is not a Lumetri Color"))),
+        None => Err(bad(cmd, format!("no effect {at}: the list has {}", effects.len()))),
+    }
+}
+
+/// The target clip and the index of its Lumetri effect: the one `effect` names, else the first
+/// (applying Lumetri when missing).
 pub(crate) fn lumetri_clip(s: &mut Session, p: &Value, cmd: &str) -> Result<(ClipId, usize)> {
+    let named = effect_index_p(p, cmd)?;
     let seq = s.active_sequence().ok_or_else(|| bad(cmd, "no active sequence"))?;
     let video = |c: &ClipId| seq.find_item(*c).is_some_and(|(t, _)| seq.track(t).is_some_and(|t| t.kind == TrackKind::Video));
     let has = |c: &ClipId| seq.find_item(*c).is_some_and(|(_, it)| it.effects.iter().any(|e| e.effect == "lumetri"));
@@ -194,6 +225,10 @@ pub(crate) fn lumetri_clip(s: &mut Session, p: &Value, cmd: &str) -> Result<(Cli
             sel.iter().copied().find(has).or(sel.first().copied()).ok_or_else(|| bad(cmd, "select a video clip"))?
         }
     };
+    if let Some(at) = named {
+        let effects = &seq.find_item(clip).ok_or_else(|| bad(cmd, "no such clip"))?.1.effects;
+        return Ok((clip, lumetri_at(effects, at, cmd)?));
+    }
     if !has(&clip) {
         s.execute("effects.apply", json!({"clips": [clip.0], "effect": "lumetri"}))?;
     }
@@ -220,9 +255,10 @@ fn set_lut(s: &mut Session, p: &Value, param: &str) -> Result<Value> {
     // a media item: its source clip effects, the import (if any) and the setting one undo step
     if names_item(p) {
         let media = source_media_p(s, p, cmd)?;
+        let effect = effect_index_p(p, cmd)?;
         let set = |s: &mut Session| {
             let r = lut_ref(s, p, cmd)?;
-            set_source_lumetri_param(s, media, param, ParamValue::Text(r.clone()), label)?;
+            set_source_lumetri_param(s, media, effect, param, ParamValue::Text(r.clone()), label)?;
             Ok(json!({"item": media.0, "lut": r, "name": filmcraft_render::luts::label(Some(&s.project), &r)}))
         };
         // (only an import has a step of its own to group with the setting; a file that cannot be
@@ -270,12 +306,16 @@ fn source_media_p(s: &Session, p: &Value, cmd: &str) -> Result<ItemId> {
     crate::source_effects::target_p(s, p, cmd)?.media().ok_or_else(|| bad(cmd, "need `item`"))
 }
 
-/// Set a Lumetri parameter among a media item's source clip effects, adding a Lumetri Color
-/// (after the others) when it has none: one undo step.
-fn set_source_lumetri_param(s: &mut Session, media: ItemId, param: &str, v: ParamValue, label: &str) -> Result<()> {
+/// Set a Lumetri parameter among a media item's source clip effects: of the Lumetri Color at index
+/// `effect`, else the first, adding one (after the others) when there is none. One undo step.
+fn set_source_lumetri_param(s: &mut Session, media: ItemId, effect: Option<usize>, param: &str, v: ParamValue, label: &str) -> Result<()> {
     let param = param.to_string();
     crate::source_effects::edit_effects(s, EffectTarget::Media(media), label, None, |it| {
-        let idx = match it.effects.iter().position(|e| e.effect == "lumetri") {
+        let found = match effect {
+            Some(at) => Some(lumetri_at(&it.effects, at, "lumetri")?),
+            None => it.effects.iter().position(|e| e.effect == "lumetri"),
+        };
+        let idx = match found {
             Some(i) => i,
             None => {
                 let d = filmcraft_project::find_effect("lumetri").ok_or_else(|| bad("lumetri", "Lumetri Color is not available"))?;
@@ -303,16 +343,18 @@ fn set_section(s: &mut Session, p: &Value) -> Result<Value> {
     };
     if names_item(p) {
         let media = source_media_p(s, p, "lumetri.setSection")?;
-        let cur = s
-            .project
-            .source_effects_of(media)
-            .iter()
-            .find(|e| e.effect == "lumetri")
-            .and_then(|e| e.param(param))
-            .and_then(|v| v.value.as_bool())
-            .unwrap_or(param != "hsl_on");
+        let effect = effect_index_p(p, "lumetri.setSection")?;
+        let effects = s.project.source_effects_of(media);
+        let chosen = match effect {
+            Some(at) => {
+                lumetri_at(effects, at, "lumetri.setSection")?;
+                effects.get(at)
+            }
+            None => effects.iter().find(|e| e.effect == "lumetri"),
+        };
+        let cur = chosen.and_then(|e| e.param(param)).and_then(|v| v.value.as_bool()).unwrap_or(param != "hsl_on");
         let v = bool_p(p, "on").unwrap_or(!cur);
-        set_source_lumetri_param(s, media, param, ParamValue::Bool(v), "Lumetri Section")?;
+        set_source_lumetri_param(s, media, effect, param, ParamValue::Bool(v), "Lumetri Section")?;
         return Ok(json!({"item": media.0, "param": param, "on": v}));
     }
     let (clip, idx) = lumetri_clip(s, p, "lumetri.setSection")?;

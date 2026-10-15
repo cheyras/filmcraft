@@ -884,7 +884,6 @@
 	Generate Keyframes	キーフレームを生成
 	Clip Volume	クリップの音量
 	(no clip selected)	(クリップが選択されていません)
-	Master · {name}	マスター · {name}
 	Add Lumetri Color to clip	クリップに Lumetri カラーを追加
 	Input LUT	入力 LUT
 	Color	カラー
@@ -3609,3 +3608,12 @@
 	Shows the version, community links and credits in a FilmCraft window.	バージョン、コミュニティへのリンク、クレジットを FilmCraft のウィンドウに表示します。
 	Couldn't open your web browser	ウェブブラウザーを開けませんでした
 	Open this address in your browser yourself:	このアドレスをご自身でブラウザーで開いてください：
+	Open media in the Source monitor to edit its source clip effects	ソースモニターでメディアを開くと、そのソースクリップエフェクトを編集できます
+	Select a clip in the Timeline to edit its effects	タイムラインでクリップを選択すると、そのエフェクトを編集できます
+	Effect presets apply to clips in the Timeline, not to source clips	エフェクトプリセットはタイムラインのクリップに適用されます。ソースクリップには適用できません
+	Select a clip or open media in the Source monitor	クリップを選択するか、ソースモニターでメディアを開いてください
+	Add Lumetri Color to source	ソースに Lumetri カラーを追加
+	Lumetri Color {n}	Lumetri カラー {n}
+	Clip effects: {n}	クリップエフェクト: {n}
+	Fixed effects changed	固定エフェクトを変更済み
+	Source clip effects: {n}	ソースクリップエフェクト: {n}

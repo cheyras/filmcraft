@@ -140,6 +140,13 @@ pub struct Tokens {
     pub render_red: Color32,
     pub render_yellow: Color32,
     pub render_green: Color32,
+    /// The Timeline's "fx" badge on a clip: standard effects on the clip, ...
+    pub fx_clip: Color32,
+    /// ... only fixed effects (Motion, Opacity…) changed from their defaults, ...
+    pub fx_fixed: Color32,
+    /// ... source clip effects on the clip's media (also the Project panel's "fx" mark); both
+    /// at once draw the badge in both colours.
+    pub fx_source: Color32,
     pub monitor_bg: Color32,
     pub timecode: Color32,
     pub danger: Color32,
@@ -233,6 +240,9 @@ impl Tokens {
             render_red: Color32::from_rgb(0xe3, 0x48, 0x50),
             render_yellow: Color32::from_rgb(0xf0, 0xf0, 0x4f),
             render_green: Color32::from_rgb(0x2d, 0x9d, 0x78),
+            fx_clip: Color32::from_rgb(0xe8, 0xc5, 0x4a),
+            fx_fixed: Color32::from_rgb(0x91, 0xa2, 0xac),
+            fx_source: Color32::from_rgb(0x4f, 0xc9, 0xa4),
             monitor_bg: Color32::from_rgb(0x1d, 0x1d, 0x1d),
             timecode: Color32::from_rgb(0x40, 0x96, 0xf3),
             danger: Color32::from_rgb(0xdc, 0x51, 0x3d),

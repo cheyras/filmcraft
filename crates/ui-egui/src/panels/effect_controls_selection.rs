@@ -51,20 +51,43 @@ struct State {
     gesture: Option<Gesture>,
 }
 
+/// The source clip effects being edited: the media as a clip (see `Subject::of_source`), its frame
+/// rate and the Source Monitor's playhead. Keyframes of source effects move on this, not on the
+/// sequence's clips, rate and playhead.
+type SourceView = (TrackItem, FrameRate, Tick);
+
 pub(crate) struct Interaction {
     state: State,
     points: Vec<Point>,
     area: Rect,
     background: Response,
     cancelled: bool,
+    /// The media's view, when the keyframes shown are source clip effects.
+    source: Option<SourceView>,
 }
 
-fn limits(app: &FilmcraftApp, keys: &[KeyframeRef]) -> Option<(i64, i64)> {
-    let q = app.session.active_sequence()?;
-    let frame = q.settings.frame_rate.frame_duration();
+/// The frame rate keys snap to, and the playhead they snap to with Shift.
+fn clock(app: &FilmcraftApp, source: Option<&SourceView>) -> (FrameRate, Tick) {
+    match source {
+        Some((_, rate, playhead)) => (*rate, *playhead),
+        None => (app.session.sequence_rate(), app.session.playhead()),
+    }
+}
+
+fn limits(app: &FilmcraftApp, keys: &[KeyframeRef], source: Option<&SourceView>) -> Option<(i64, i64)> {
+    let q = app.session.active_sequence();
+    let frame = match source {
+        Some((_, rate, _)) => rate.frame_duration(),
+        None => q?.settings.frame_rate.frame_duration(),
+    };
     let (mut low, mut high) = (i64::MIN, i64::MAX);
     for key in keys {
-        let (_, it) = q.find_item(filmcraft_project::ClipId(key.clip))?;
+        let it = match (source, q) {
+            (Some((view, ..)), _) if view.id.0 == key.clip => view,
+            (Some(_), _) => return None,
+            (None, Some(q)) => q.find_item(filmcraft_project::ClipId(key.clip))?.1,
+            (None, None) => return None,
+        };
         let speed = it.speed.abs() * if it.reverse { -1.0 } else { 1.0 };
         if !speed.is_finite() || speed == 0.0 || it.duration < frame {
             return None;
@@ -103,7 +126,7 @@ fn update(group: &mut Group, points: &[Point], pos: Pos2, shift: bool, playhead:
 }
 
 impl Interaction {
-    pub(crate) fn begin(app: &mut FilmcraftApp, ui: &mut egui::Ui, area: Rect, clip: u64) -> Self {
+    pub(crate) fn begin(app: &mut FilmcraftApp, ui: &mut egui::Ui, area: Rect, clip: u64, source: Option<SourceView>) -> Self {
         let mut state = ui.data(|d| d.get_temp::<State>(state_id())).unwrap_or_default();
         if state.clip != clip {
             state = State { clip, ..Default::default() };
@@ -123,16 +146,15 @@ impl Interaction {
             let base = if ui.input(|i| i.modifiers.shift) { app.ui.keyframe_selection.clone() } else { Vec::new() };
             state.gesture = Some(Gesture::Marquee { origin, end: origin, base });
         }
+        let (rate, playhead) = clock(app, source.as_ref());
         if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
             match &mut state.gesture {
                 Some(Gesture::Marquee { end, .. }) => *end = pos,
-                Some(Gesture::Group(group)) => {
-                    update(group, &state.points, pos, ui.input(|i| i.modifiers.shift), app.session.playhead(), app.session.sequence_rate())
-                }
+                Some(Gesture::Group(group)) => update(group, &state.points, pos, ui.input(|i| i.modifiers.shift), playhead, rate),
                 None => {}
             }
         }
-        Self { state, points: Vec::new(), area, background, cancelled }
+        Self { state, points: Vec::new(), area, background, cancelled, source }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -172,7 +194,7 @@ impl Interaction {
                 app.ui.keyframe_selection.push(key.clone());
             }
             let keys = app.ui.keyframe_selection.clone();
-            if let Some((low, high)) = limits(app, &keys) {
+            if let Some((low, high)) = limits(app, &keys, self.source.as_ref()) {
                 let press = ui.input(|i| i.pointer.press_origin()).unwrap_or(rect.center());
                 let mut group = Group {
                     anchor: key.clone(),
@@ -187,7 +209,8 @@ impl Interaction {
                     ended: false,
                 };
                 if let Some(pos) = response.interact_pointer_pos() {
-                    update(&mut group, &self.state.points, pos, shift, app.session.playhead(), app.session.sequence_rate());
+                    let (rate, playhead) = clock(app, self.source.as_ref());
+                    update(&mut group, &self.state.points, pos, shift, playhead, rate);
                 }
                 self.state.gesture = Some(Gesture::Group(group));
             }
@@ -233,7 +256,12 @@ impl Interaction {
             }
             if group.ended {
                 if group.delta != Tick::ZERO {
-                    match app.session.execute("effects.moveKeyframes", json!({"keyframes":group.keys,"delta":group.delta.0})) {
+                    // (source clip effects: the keys' `clip` is the media item they belong to)
+                    let mut params = json!({"keyframes":group.keys,"delta":group.delta.0});
+                    if self.source.is_some() {
+                        params["item"] = json!(self.state.clip);
+                    }
+                    match app.session.execute("effects.moveKeyframes", params) {
                         Ok(result) => {
                             if let Ok(keys) = serde_json::from_value(result["keyframes"].clone()) {
                                 app.ui.keyframe_selection = keys;

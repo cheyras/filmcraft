@@ -230,6 +230,124 @@ fn lumetri_commands_edit_the_source_effects() {
     assert_eq!(worst(&picture(&s), &plain), 0.0);
 }
 
+/// A media item or a clip can hold several Lumetri Colors (a first pass and a look, say):
+/// `effect` says which one a Lumetri command edits, and defaults to the first.
+#[test]
+fn lumetri_commands_edit_the_lumetri_color_they_name() {
+    let mut s = demo();
+    let (clip, item) = pick(&mut s);
+    let look = "builtin:look-monochrome";
+    // [blur, lumetri, lumetri] among the source effects
+    s.execute("effects.apply", json!({"item": item.0, "effect": "gaussian_blur"})).unwrap();
+    for _ in 0..2 {
+        s.execute("effects.apply", json!({"item": item.0, "effect": "lumetri"})).unwrap();
+    }
+    let value = |s: &Session, i: usize, p: &str| source_fx(s, item)[i].param(p).map(|p| p.value.clone());
+    let steps = undo_steps(&s);
+    s.execute("lumetri.setLook", json!({"item": item.0, "effect": 2, "lut": look})).unwrap();
+    assert_eq!(undo_steps(&s), steps + 1);
+    assert_eq!(value(&s, 2, "look_lut"), Some(ParamValue::Text(look.into())));
+    assert_ne!(value(&s, 1, "look_lut"), Some(ParamValue::Text(look.into())), "the first Lumetri was left alone");
+    s.execute("lumetri.setInputLut", json!({"item": item.0, "effect": 1, "lut": "builtin:slog3-sgamut3cine-to-rec709"})).unwrap();
+    assert_eq!(value(&s, 1, "input_lut"), Some(ParamValue::Text("builtin:slog3-sgamut3cine-to-rec709".into())));
+    assert_ne!(value(&s, 2, "input_lut"), value(&s, 1, "input_lut"));
+    let (a, b) = (value(&s, 1, "vignette_on"), value(&s, 2, "vignette_on"));
+    s.execute("lumetri.setSection", json!({"item": item.0, "effect": 2, "section": "vignette"})).unwrap();
+    assert_eq!(value(&s, 1, "vignette_on"), a);
+    assert_ne!(value(&s, 2, "vignette_on"), b, "the switch is the second Lumetri's");
+    // without `effect`, the first one
+    s.execute("lumetri.setLook", json!({"item": item.0, "lut": look})).unwrap();
+    assert_eq!(value(&s, 1, "look_lut"), Some(ParamValue::Text(look.into())));
+    // and a clip's
+    for _ in 0..2 {
+        s.execute("effects.apply", json!({"clips": [clip.0], "effect": "lumetri"})).unwrap();
+    }
+    let on_clip: Vec<usize> =
+        s.active_sequence().unwrap().find_item(clip).unwrap().1.effects.iter().enumerate().filter(|(_, e)| e.effect == "lumetri").map(|(i, _)| i).collect();
+    assert_eq!(on_clip.len(), 2);
+    s.execute("lumetri.setLook", json!({"clip": clip.0, "effect": on_clip[1], "lut": look})).unwrap();
+    let clip_fx = s.active_sequence().unwrap().find_item(clip).unwrap().1.effects.clone();
+    assert_eq!(clip_fx[on_clip[1]].param("look_lut").map(|p| p.value.clone()), Some(ParamValue::Text(look.into())));
+    assert_ne!(clip_fx[on_clip[0]].param("look_lut").map(|p| p.value.clone()), Some(ParamValue::Text(look.into())));
+    // an effect that is not a Lumetri Color, past the end, or not an index: refused, nothing edited
+    // (standard effects sit before a clip's fixed ones, so Motion is not first)
+    let motion = clip_fx.iter().position(|e| e.effect == "motion").unwrap();
+    let hostile = |first: usize| [json!(first), json!(9), json!(-1), json!(1.5), json!("lumetri"), json!(true), json!(u64::MAX)];
+    for effect in hostile(0) {
+        for cmd in ["lumetri.setLook", "lumetri.setInputLut"] {
+            let e = refused(&mut s, cmd, json!({"item": item.0, "effect": effect, "lut": look}));
+            assert!(e.contains("Lumetri Color") || e.contains("no effect"), "{cmd} {effect}: {e}");
+        }
+        refused(&mut s, "lumetri.setSection", json!({"item": item.0, "effect": effect, "section": "basic"}));
+    }
+    for effect in hostile(motion) {
+        let e = refused(&mut s, "lumetri.setLook", json!({"clip": clip.0, "effect": effect, "lut": look}));
+        assert!(e.contains("Lumetri Color") || e.contains("no effect"), "{effect}: {e}");
+        refused(&mut s, "lumetri.setSection", json!({"clip": clip.0, "effect": effect, "section": "basic"}));
+    }
+}
+
+/// Keys of source clip effects move together as one edit, in media time, anywhere within the media.
+#[test]
+fn source_keyframes_move_together() {
+    let mut s = demo();
+    let (_, item) = pick(&mut s);
+    let at = |sec: i64| sec * TICKS_PER_SECOND;
+    let duration = s.project.item(item).unwrap().duration();
+    assert!(duration.0 > at(6), "the demo media is long enough: {duration:?}");
+    s.execute("effects.apply", json!({"item": item.0, "effect": "lumetri"})).unwrap();
+    for (p, sec) in [("exposure", 1), ("exposure", 2), ("saturation", 1)] {
+        s.execute("effects.setParam", json!({"item": item.0, "effect": "lumetri", "param": p, "value": 1.0, "keyframe": true, "time": at(sec)})).unwrap();
+    }
+    let times = |s: &Session, p: &str| param(s, item, 0, p).keyframes.iter().map(|k| k.time.0).collect::<Vec<_>>();
+    let keys = |t: [(&str, i64); 3]| t.map(|(p, sec)| json!({"clip": item.0, "effect": 0, "param": p, "time": at(sec)}));
+    let steps = undo_steps(&s);
+    let r = s
+        .execute("effects.moveKeyframes", json!({"item": item.0, "keyframes": keys([("exposure", 1), ("exposure", 2), ("saturation", 1)]), "delta": at(1)}))
+        .unwrap();
+    assert_eq!(r["delta"], json!(at(1)));
+    assert_eq!(r["keyframes"][0]["time"], json!(at(2)), "the answer names the keys where they are now");
+    assert_eq!((times(&s, "exposure"), times(&s, "saturation")), (vec![at(2), at(3)], vec![at(2)]));
+    assert_eq!(undo_steps(&s), steps + 1, "one edit for all the lanes");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!((times(&s, "exposure"), times(&s, "saturation")), (vec![at(1), at(2)], vec![at(1)]));
+    // past the media's end the group stops at its last frame, with its spacing
+    let r = s
+        .execute(
+            "effects.moveKeyframes",
+            json!({"item": item.0, "keyframes": keys([("exposure", 1), ("exposure", 2), ("saturation", 1)]), "delta": duration.0 * 4}),
+        )
+        .unwrap();
+    let moved = r["delta"].as_i64().unwrap();
+    assert!(moved > 0 && moved < duration.0 * 4, "{moved}");
+    let t = times(&s, "exposure");
+    assert_eq!(t[1] - t[0], at(1), "the spacing is kept");
+    assert!(t[1] < duration.0, "inside the media");
+    // refused, and nothing edited: a key of another clip, a missing key, something that is not media
+    let clip_key = json!([{"clip": item.0 + 1, "effect": 0, "param": "exposure", "time": t[0]}]);
+    refused(&mut s, "effects.moveKeyframes", json!({"item": item.0, "keyframes": clip_key, "delta": 0}));
+    refused(
+        &mut s,
+        "effects.moveKeyframes",
+        json!({"item": item.0, "keyframes": [{"clip": item.0, "effect": 0, "param": "exposure", "time": 12345}], "delta": 1}),
+    );
+    refused(
+        &mut s,
+        "effects.moveKeyframes",
+        json!({"item": item.0, "keyframes": [{"clip": item.0, "effect": 7, "param": "exposure", "time": t[0]}], "delta": 1}),
+    );
+    refused(
+        &mut s,
+        "effects.moveKeyframes",
+        json!({"item": u64::MAX, "keyframes": [{"clip": u64::MAX, "effect": 0, "param": "exposure", "time": 0}], "delta": 1}),
+    );
+    refused(
+        &mut s,
+        "effects.moveKeyframes",
+        json!({"item": item.0, "clip": 1, "keyframes": [{"clip": 1, "effect": 0, "param": "exposure", "time": 0}], "delta": 1}),
+    );
+}
+
 #[test]
 fn toggle_and_remove_by_index() {
     let mut s = demo();
@@ -447,29 +565,85 @@ fn timeline_clip_commands_are_as_before() {
     assert!(spec.params.contains("\"item\":id"), "{}", spec.params);
 }
 
-/// Known limitation, kept as a failing-on-purpose test (`cargo test -- --ignored`): Create Proxies
-/// renders the media through the whole pipeline (`proxies::transcode` clones the `MediaClip`, source
-/// effects and Interpret Footage included), so the proxy file already has the source effects in its
-/// pixels; playing with proxies on then runs them again over the proxy frames. The same happens to
-/// Interpret Footage's colour-space override today. The fix is to transcode the media without its
-/// source effects and interpretation; until then a proxy of media with source effects looks wrong.
+/// Create Proxies, play with proxies on, and compare the program frame with the one the
+/// full-resolution media gives (in dB: the higher the closer). Also the colour space the proxy
+/// file signals.
+fn proxy_match(path: &std::path::Path, setup: impl Fn(&mut Session, ItemId), sequence_color: Option<&str>) -> (f64, Option<filmcraft_color::ColorSpace>) {
+    use crate::media_test_util::{frame_rgba, psnr, session_with};
+    let (mut s, items, _) = session_with(&[path]);
+    if let Some(space) = sequence_color {
+        s.execute("sequence.colorSettings", json!({"workingSpace": space})).unwrap();
+    }
+    setup(&mut s, items[0]);
+    let full = frame_rgba(&mut s, 5, 1.0);
+    s.execute("media.createProxies", json!({"items": [items[0].0], "preset": "prores_proxy_half", "wait": true})).unwrap();
+    let proxy = s.project.item(items[0]).unwrap().as_media().unwrap().proxy.clone();
+    let Some(filmcraft_project::MediaRef::File { path: proxy_path }) = proxy else { panic!("the proxy is attached") };
+    let signalled = s.media.open_file(&proxy_path, &*s.services).unwrap().info().video.as_ref().map(|v| filmcraft_color::ColorSpace::from_info(&v.color));
+    s.execute("media.toggleProxies", json!({"enabled": true})).unwrap();
+    let proxied = frame_rgba(&mut s, 5, 1.0);
+    assert_ne!(full.2, proxied.2, "the proxy was read (it is half the size, so the pictures are not equal)");
+    (psnr(&proxied.2, &full.2), signalled)
+}
+
+/// A proxy is the footage as the file has it: playback applies the source clip effects to it, so
+/// they must not be in its pixels already (an Invert on the media inverts the proxy once, not twice).
 #[test]
-#[ignore = "known limitation: a proxy has the source effects baked in, and playback applies them again"]
 fn a_proxy_shows_the_picture_of_the_full_resolution_media() {
-    use crate::media_test_util::{frame_rgba, make_movie, psnr, session_with, tmp_dir};
+    use crate::media_test_util::{make_movie, tmp_dir};
     let root = tmp_dir("proxy-source-effects");
     let a = root.join("a.mov");
     make_movie(&a, filmcraft_media::DemoScene::OceanSunset, 320, 180, 12);
-    let (mut s, items, _) = session_with(&[&a]);
     // Invert twice is the original picture: a doubled effect is plain to see
-    s.execute("effects.apply", json!({"item": items[0].0, "effect": "invert"})).unwrap();
-    let full = frame_rgba(&mut s, 5, 1.0);
-    s.execute("media.createProxies", json!({"items": [items[0].0], "preset": "prores_proxy_half", "wait": true})).unwrap();
-    s.execute("media.toggleProxies", json!({"enabled": true})).unwrap();
-    let proxied = frame_rgba(&mut s, 5, 1.0);
-    let q = psnr(&proxied.2, &full.2);
+    let (q, _) = proxy_match(&a, |s, i| drop(s.execute("effects.apply", json!({"item": i.0, "effect": "invert"})).unwrap()), None);
     let _ = std::fs::remove_dir_all(&root);
     assert!(q > 25.0, "the proxy picture matches the full-resolution one: {q:.1} dB");
+}
+
+/// The same for the Interpret Footage colour space: the log curve is applied by playback, to the
+/// proxy's code values, so the proxy must hold the file's code values, not the converted picture.
+#[test]
+fn a_proxy_of_log_footage_shows_the_picture_of_the_full_resolution_media() {
+    use crate::media_test_util::{make_movie, tmp_dir};
+    let root = tmp_dir("proxy-log");
+    let a = root.join("a.mov");
+    make_movie(&a, filmcraft_media::DemoScene::OceanSunset, 320, 180, 12);
+    let log = |s: &mut Session, i: ItemId| drop(s.execute("clip.interpretFootage", json!({"items": [i.0], "colorSpace": "slog3-sgamut3cine"})).unwrap());
+    let (q, _) = proxy_match(&a, log, None);
+    // and with a source Lumetri on top, as a log shoot is graded
+    let graded = |s: &mut Session, i: ItemId| {
+        log(s, i);
+        s.execute("lumetri.setInputLut", json!({"item": i.0, "lut": "builtin:slog3-sgamut3cine-to-rec709"})).unwrap();
+        s.execute("effects.setParam", json!({"item": i.0, "effect": "lumetri", "param": "exposure", "value": 0.5})).unwrap();
+    };
+    let (g, _) = proxy_match(&a, graded, None);
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(q > 25.0, "log footage: the proxy picture matches the full-resolution one: {q:.1} dB");
+    assert!(g > 25.0, "log footage with a source Lumetri: {g:.1} dB");
+}
+
+/// HDR footage stays HDR in its proxy: an HDR sequence plays the proxy as it plays the media (a
+/// proxy tone mapped to SDR would have lost the highlights there), and an SDR sequence maps both
+/// the same.
+#[test]
+fn a_proxy_of_hdr_footage_shows_the_picture_of_the_full_resolution_media() {
+    use crate::media_test_util::{make_movie_in, tmp_dir};
+    use filmcraft_color::{ColorPipeline, ColorSpace, WorkingSpace};
+    let root = tmp_dir("proxy-hdr");
+    let none = |_: &mut Session, _: ItemId| {};
+    for (file, working, name, space) in
+        [("pq.mov", WorkingSpace::Rec2100Pq, "rec2100-pq", ColorSpace::Rec2100Pq), ("hlg.mov", WorkingSpace::Rec2100Hlg, "rec2100-hlg", ColorSpace::Rec2100Hlg)]
+    {
+        let path = root.join(file);
+        // two stops up: highlights well above SDR white
+        make_movie_in(&path, filmcraft_media::DemoScene::OceanSunset, 320, 180, 12, ColorPipeline { working, ..ColorPipeline::REC709 }, 2.0);
+        for sequence in [None, Some(name)] {
+            let (q, signalled) = proxy_match(&path, none, sequence);
+            assert_eq!(signalled, Some(space), "{file}: the proxy signals the media's colour space");
+            assert!(q > 25.0, "{file} in {}: {q:.1} dB", sequence.unwrap_or("an SDR sequence"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]

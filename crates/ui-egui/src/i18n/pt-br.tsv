@@ -890,7 +890,6 @@
 	Generate Keyframes	Gerar quadros-chave
 	Clip Volume	Volume do clipe
 	(no clip selected)	(nenhum clipe selecionado)
-	Master · {name}	Mestre · {name}
 	Add Lumetri Color to clip	Adicionar Cor Lumetri ao clipe
 	Input LUT	LUT de entrada
 	Color	Cor
@@ -3578,3 +3577,12 @@
 
 # The native macOS application menu (Settings…).
 	Settings	Preferências
+	Open media in the Source monitor to edit its source clip effects	Abra uma mídia no monitor de origem para editar os efeitos do clipe de origem dela
+	Select a clip in the Timeline to edit its effects	Selecione um clipe na linha do tempo para editar os efeitos dele
+	Effect presets apply to clips in the Timeline, not to source clips	As predefinições de efeitos se aplicam a clipes da linha do tempo, não a clipes de origem
+	Select a clip or open media in the Source monitor	Selecione um clipe ou abra uma mídia no monitor de origem
+	Add Lumetri Color to source	Adicionar Cor Lumetri à origem
+	Lumetri Color {n}	Cor Lumetri {n}
+	Clip effects: {n}	Efeitos do clipe: {n}
+	Fixed effects changed	Efeitos fixos alterados
+	Source clip effects: {n}	Efeitos do clipe de origem: {n}

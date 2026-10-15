@@ -29,7 +29,7 @@ Methods (handlers in `crates/ui-egui/src/control.rs`):
 | `engine.commands` / `ui.menu.list` | – | command registry / menu tree |
 | `ui.inspect` | – | UI state (tool, workspace, dock, timeline view, playback, fps…) |
 | `ui.elements` | `{prefix?}` | every on-screen interactive element: id, label, rect |
-| `ui.set` | `{tool, workspace, mode, theme, focused, playbackRes, timeline:{pps,scroll,fit}, program:{…}, source:{…}, clipDialog:{param: value}, menuDialog:{param: value}, panels:{scopes, timecode, reference, events, progress}, export:{…}, keyframeSelection:[…]}` | `keyframeSelection` replaces the Effect Controls keyframe selection (`[{clip, effect, param, mask?, time}]`, `time` in media ticks; read back as `ui.inspect` → `ui.keyframe_selection`; a click on a lane keyframe selects just that one); `program` / `source` merge fields into the monitor view state (`res`, `paused_res`, `high_quality`, `display`, `zoom`, `pan`, `show_rulers`, `show_guides`, `lock_guides`, `snap`, `guides`, `compare_ref`, …; see [monitors.md](monitors.md)); `clipDialog` sets fields of the open Edit / Clip / File dialog (Paste Attributes, Make Subclip, Frame Hold Options, …); `menuDialog` those of the M3.11 dialogs (Find, Create Search Bin, Project Settings, Scene Edit Detection, Simplify Sequence, Automate to Sequence…; see `panels::menu_dialogs`); `panels` merges into the panel settings (`ui.inspect` → `ui.panels`; see `panels::panel_state`): Lumetri Scopes `{shown: ["vectorscopeYuv"|"vectorscopeHls"|"histogram"|"parade"|"waveform"], waveformType, paradeType, colorSpace, brightness, scale, clamp, targets}`, Timecode `{rows: [{source, mode, display}], showName}`, Reference Monitor `{ganged, time, display: "composite"|"scopes", scopes}`, Events `{level, selected}`, Progress `{showFinished}` `export` deep-merges into Export mode state (`preset` — applied first —, `settings` (ExportSettings JSON), `fileName`, `location`, `range`, `customStart`, `customEnd`, `openSections`, `manager` (Preset Manager: `query`, `favoritesOnly`, `selected`, `saveName`), `quickOpen`, `quickPath`, `quickPreset`); `program` / `source` merge fields into the monitor view state (`res`, `paused_res`, `high_quality`, `display`, `zoom`, `pan`, `show_rulers`, `show_guides`, `lock_guides`, `snap`, `guides`, `compare_ref`, …; see [monitors.md](monitors.md)); `clipDialog` sets fields of the open Edit / Clip / File dialog (Paste Attributes, Make Subclip, Frame Hold Options, …); `menuDialog` those of the M3.11 dialogs (Find, Create Search Bin, Project Settings, Scene Edit Detection, Simplify Sequence, Automate to Sequence…; see `panels::menu_dialogs`); `projectPanel` merges into the Project panel's view state (`bin` shown in place, `tabs` (bins in a tab or window: `{bin, floating, view, iconSize, nav}`), `activeTab`, `selectedBin`, `rename: {item|bin, text}`, `dialog` (`{"metadataDisplay": {columns, filter}}`, `{"savePresetAs": {name}}`, `{"managePresets": {selected, name}}`, `{"freeformOptions": {options}}`, `{"saveArrangement": {name, bin}}`)); `mediaBrowser` into the Media Browser's (`expanded`, `pathEdit`, `editColumns`, `treeWidth`). View settings, columns and presets are engine commands (`project.view.set`, `project.columns.set`, `project.viewPreset.*`, `mediaBrowser.settings`) |
+| `ui.set` | `{tool, workspace, mode, theme, focused, playbackRes, timeline:{pps,scroll,fit}, program:{…}, source:{…}, clipDialog:{param: value}, menuDialog:{param: value}, panels:{scopes, timecode, reference, events, progress}, export:{…}, keyframeSelection:[…], fxTarget:"source"|"sequence"}` | `fxTarget` picks what Lumetri Color and Effect Controls edit when both the Source Monitor's media and a clip are possible (read back as `ui.inspect` → `ui.fx_target.pick`; see Source clip effects below); `keyframeSelection` replaces the Effect Controls keyframe selection (`[{clip, effect, param, mask?, time}]`, `time` in media ticks; read back as `ui.inspect` → `ui.keyframe_selection`; a click on a lane keyframe selects just that one); `program` / `source` merge fields into the monitor view state (`res`, `paused_res`, `high_quality`, `display`, `zoom`, `pan`, `show_rulers`, `show_guides`, `lock_guides`, `snap`, `guides`, `compare_ref`, …; see [monitors.md](monitors.md)); `clipDialog` sets fields of the open Edit / Clip / File dialog (Paste Attributes, Make Subclip, Frame Hold Options, …); `menuDialog` those of the M3.11 dialogs (Find, Create Search Bin, Project Settings, Scene Edit Detection, Simplify Sequence, Automate to Sequence…; see `panels::menu_dialogs`); `panels` merges into the panel settings (`ui.inspect` → `ui.panels`; see `panels::panel_state`): Lumetri Scopes `{shown: ["vectorscopeYuv"|"vectorscopeHls"|"histogram"|"parade"|"waveform"], waveformType, paradeType, colorSpace, brightness, scale, clamp, targets}`, Timecode `{rows: [{source, mode, display}], showName}`, Reference Monitor `{ganged, time, display: "composite"|"scopes", scopes}`, Events `{level, selected}`, Progress `{showFinished}` `export` deep-merges into Export mode state (`preset` — applied first —, `settings` (ExportSettings JSON), `fileName`, `location`, `range`, `customStart`, `customEnd`, `openSections`, `manager` (Preset Manager: `query`, `favoritesOnly`, `selected`, `saveName`), `quickOpen`, `quickPath`, `quickPreset`); `program` / `source` merge fields into the monitor view state (`res`, `paused_res`, `high_quality`, `display`, `zoom`, `pan`, `show_rulers`, `show_guides`, `lock_guides`, `snap`, `guides`, `compare_ref`, …; see [monitors.md](monitors.md)); `clipDialog` sets fields of the open Edit / Clip / File dialog (Paste Attributes, Make Subclip, Frame Hold Options, …); `menuDialog` those of the M3.11 dialogs (Find, Create Search Bin, Project Settings, Scene Edit Detection, Simplify Sequence, Automate to Sequence…; see `panels::menu_dialogs`); `projectPanel` merges into the Project panel's view state (`bin` shown in place, `tabs` (bins in a tab or window: `{bin, floating, view, iconSize, nav}`), `activeTab`, `selectedBin`, `rename: {item|bin, text}`, `dialog` (`{"metadataDisplay": {columns, filter}}`, `{"savePresetAs": {name}}`, `{"managePresets": {selected, name}}`, `{"freeformOptions": {options}}`, `{"saveArrangement": {name, bin}}`)); `mediaBrowser` into the Media Browser's (`expanded`, `pathEdit`, `editColumns`, `treeWidth`). View settings, columns and presets are engine commands (`project.view.set`, `project.columns.set`, `project.viewPreset.*`, `mediaBrowser.settings`) |
 | `ui.panel.show` / `ui.panel.close` | `{panel}` | |
 | `ui.click` / `ui.move` | `{id}` or `{x,y}`, `button`, `count`, `modifiers` | synthetic pointer input |
 | `ui.drag` | `{from, to, steps, modifiers}` | press–move–release |
@@ -143,12 +143,16 @@ the result's `sourceInClamped: [ids]` (present with `keepSourceIn`) names the cl
 rec2100-hlg, wideGamut, autoToneMap}`, `clip.interpretFootage {items?, colorSpace?: auto|<id>, pixelAspect?: [num, den]|file}`,
 `color.spaces`, `media.colorInfo {item}`; LUTs: `lut.import {path, name?}`, `lut.list`,
 `lut.remove {id}`, `lut.export {lut, path, format?}`, `lumetri.setInputLut` / `lumetri.setLook
-{clip?|item?, lut: lib:<id>|builtin:<id>|"", path?}`, `lumetri.setSection {clip?|item?, section, on?}`,
-`lumetri.applyMatch {clip?, referenceTime|referenceFrame|referenceTimecode, faceDetection?}`. Without
+{clip?|item?, effect?, lut: lib:<id>|builtin:<id>|"", path?}`, `lumetri.setSection {clip?|item?, effect?, section, on?}`,
+`lumetri.applyMatch {clip?, effect?, referenceTime|referenceFrame|referenceTimecode, faceDetection?}`
+(a clip or a media item can hold several Lumetri Colors: `effect` is the index of the one to edit in
+its effect list, default the first; an index that is not a Lumetri Color is an error, and the
+commands then never add one). Without
 params the menu entries open dialogs (ids `colorDialog.space.<id>`, `colorDialog.working.<id>`,
 `colorDialog.wideGamut`, `colorDialog.autoToneMap`, `colorDialog.ok|cancel`). Lumetri panel ids:
-`lumetri.input_lut`, `lumetri.look_lut`, `lumetri.switch.<section>`, `lumetri.section.<section>`,
-`lumetri.match.*`; HDR scopes: `scopes.hdrWaveform`. `file.exportMedia {sdr: true}` exports an HDR
+`lumetri.input_lut`, `lumetri.look_lut`, `lumetri.look`, `lumetri.hsl_show_mask`, `lumetri.param.<id>` (every
+slider), `lumetri.curve.<id>`, `lumetri.wheel.<id>`, `lumetri.switch.<section>`, `lumetri.section.<section>`,
+`lumetri.match.*`, and those of the target and effect rows described under Source clip effects; HDR scopes: `scopes.hdrWaveform`. `file.exportMedia {sdr: true}` exports an HDR
 sequence as tone-mapped SDR.
 
 **Source clip effects** (Premiere's master clip effects; `crates/engine/src/source_effects.rs`). A media
@@ -172,8 +176,11 @@ keyframe?, merge?}`, `effects.toggleAnimation`, `effects.reset {item, index}`, `
 `effects.setInterpolation` (all with `item` and times in **media ticks**; a command with no `time`
 works at the Source Monitor's playhead when the item is open there, else at media time 0), and the Lumetri commands `lumetri.setInputLut {item, lut|path}`, `lumetri.setLook`,
 `lumetri.setSection {item, section, on?}` (these add a Lumetri Color to the list when it has none,
-in the same undo step) and `lumetri.applyPreset {item|items, name}`. `lumetri.applyMatch` refuses `item`
-("unsupported for source clips"). `effects.moveKeyframes` and the mask commands are timeline-clip only.
+in the same undo step, unless `effect` names one) and `lumetri.applyPreset {item|items, name}`.
+`lumetri.applyMatch` refuses `item` ("unsupported for source clips"). `effects.moveKeyframes
+{item, keyframes, delta}` moves keys of the media's source effects together as one edit: each key's
+`clip` is the item's id, `delta` is in media ticks, and the keys stay inside the media. The mask
+commands are timeline-clip only.
 Read the list with `effects.list {item}` (`{item, effects: [{index, effect, name, enabled, masks,
 allowed, params: {id: {value, keyframes: [mediaTicks]}}}]}`; without `item`, `effects.list` is the
 catalogue of effects as before). `sequence.inspect` clips carry `sourceEffects` (the count of their
@@ -188,12 +195,43 @@ tracks (Track Matte Key, Compound Blur, Gradient Wipe) and effects that depend o
 sequence (Timecode, Clip Name, Metadata Burn-in, Grow, Shrink, Move, Spin). A clip's own temporal
 effect (Echo on the clip) sees the source effects on the frames it reads.
 
-*Known limitation:* Create Proxies renders the media through the whole pipeline with its source clip
-effects (and its Interpret Footage settings), so the proxy file has them baked in, and playback with
-proxies on then applies them again to the proxy frames. The same happens to the colour-space override.
-The ignored test `a_proxy_shows_the_picture_of_the_full_resolution_media` shows it (4.8 dB against
-the full-resolution picture). Until proxies are transcoded without them, turn proxies off for
-media with source effects.
+**Proxies and transcodes** stand in for the media, and playback applies the media's source clip
+effects and its Interpret Footage colour space to whatever file it reads, so a proxy (and an
+ingest or Project Manager transcode) holds the footage as the file has it: its source effects are
+left out, and so is the colour-space override, with the pixels passed through untouched (the
+override says what the pixels are, whatever the file's tags say, so a log shot tagged BT.2020 is
+not gamut-mapped before playback reads it as log). Without an override, a file signalled as PQ or
+HLG is transcoded in that HDR space and signals it, so an HDR sequence plays the proxy as HDR; other
+files are read as they signal. The tests `a_proxy_shows_the_picture_of_the_full_resolution_media`,
+`a_proxy_of_log_footage_…` and `a_proxy_of_hdr_footage_…` play each against the full-resolution
+picture. A proxy made under an override is tagged Rec. 709: change the override and the proxy follows,
+but remove it from a file whose own tags are not Rec. 709 (PQ, HLG, wide gamut) and the proxy no longer
+matches, so create it again.
+
+**Lumetri Color and Effect Controls** (`crates/ui-egui/src/panels/fx_target.rs`) edit either the
+selected clip or the source clip effects of the media open in the Source Monitor. Each panel opens
+with two pills, `Source · <media>` and `<sequence> · <clip>` (the shown one filled, the other
+outlined; a pill with nothing behind it is dimmed and disabled; long text is cut off with "…" and the
+tooltip gives it all). The pick is shared by both panels and follows the context: opening media in
+the Source Monitor or focusing it picks Source, selecting a clip or a transition in the Timeline picks
+Sequence, a click on a pill holds until one of those happens again (`ui.set {fxTarget}` sets it). In
+the Lumetri panel an instance menu picks which Lumetri Color of the target to edit (`Lumetri Color`,
+`Lumetri Color 2`…) and sits beside the fx bypass and the reset button; a target with none offers
+**Add Lumetri Color to source / clip**. Every control then edits that target through `clip` or
+`item` commands; keyframed values are read and written at the Source Monitor's playhead in media
+time. Color Match is not offered for the source. Effect Controls lists the source effects (no Motion,
+Opacity or Time Remapping, no masks, no eyedropper, no presets) on a ruler spanning the media with
+the Source Monitor's playhead; clicking the ruler or a keyframe moves that playhead. An effect
+dragged from the Effects panel onto Effect Controls (showing Source) or onto the Source Monitor
+becomes a source effect of the open media (a Lumetri preset becomes its Lumetri Color); what the
+engine refuses shows its reason in the status bar. The Timeline's fx badge shows source effects in a
+colour of their own (`fx_source`; yellow `fx_clip` is the clip's, grey `fx_fixed` only changed fixed
+effects), in both colours when the clip has both, with the counts in its tooltip; the Project panel
+marks media that has them with a small fx chip. Automation ids: `lumetri.target.source`,
+`lumetri.target.sequence`, `lumetri.instance` (+ `.option.<n>` while open), `lumetri.fx`,
+`lumetri.reset`, `lumetri.add`; `effectControls.target.source`, `effectControls.target.sequence`,
+`effectControls.effect.<id>` with `.twirl`, `.enable`, `.reset`, `.clear` (context menu);
+`timeline.clip.<clip>.fx` (labelled with the badge's tooltip); `<project view>.item.<item>.sourceFx`.
 
 **Keyboard shortcuts** (`crates/engine/src/shortcuts.rs`): `shortcuts.list {query?, panel?}`,
 `shortcuts.get`, `shortcuts.set {command, keys, panel?, add?, keepConflicts?}`, `shortcuts.clear`,

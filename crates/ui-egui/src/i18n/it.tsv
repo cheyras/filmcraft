@@ -885,7 +885,6 @@
 	Generate Keyframes	Genera fotogrammi chiave
 	Clip Volume	Volume clip
 	(no clip selected)	(nessuna clip selezionata)
-	Master · {name}	Master · {name}
 	Add Lumetri Color to clip	Aggiungi Colore Lumetri alla clip
 	Input LUT	LUT di ingresso
 	Color	Colore
@@ -3601,3 +3600,12 @@
 	Shows the version, community links and credits in a FilmCraft window.	Mostra la versione, i link della community e i riconoscimenti in una finestra di FilmCraft.
 	Couldn't open your web browser	Impossibile aprire il browser web
 	Open this address in your browser yourself:	Apri tu questo indirizzo nel browser:
+	Open media in the Source monitor to edit its source clip effects	Apri un file multimediale nel monitor sorgente per modificare gli effetti della sua clip sorgente
+	Select a clip in the Timeline to edit its effects	Seleziona una clip nella Timeline per modificarne gli effetti
+	Effect presets apply to clips in the Timeline, not to source clips	I predefiniti di effetti si applicano alle clip della Timeline, non alle clip sorgente
+	Select a clip or open media in the Source monitor	Seleziona una clip o apri un file multimediale nel monitor sorgente
+	Add Lumetri Color to source	Aggiungi Colore Lumetri alla sorgente
+	Lumetri Color {n}	Colore Lumetri {n}
+	Clip effects: {n}	Effetti della clip: {n}
+	Fixed effects changed	Effetti fissi modificati
+	Source clip effects: {n}	Effetti della clip sorgente: {n}
