@@ -1,9 +1,13 @@
 //! Atomic edits of keys across effect/mask parameters: movement, where the common timeline delta
 //! keeps relative timing intact, including at the clip boundaries, and interpolation. Selection
 //! itself is a UI concern.
+//!
+//! With `item` the keys belong to the source clip effects of a media item: their `clip` is that
+//! item's id, and their times and the `delta` are media ticks. They may move anywhere within the
+//! media (its view, [`filmcraft_project::Project::media_view`], is the clip they sit on).
 use std::collections::{BTreeMap, HashSet};
 
-use filmcraft_project::{ClipId, Keyframe, Param, Sequence, TrackItem};
+use filmcraft_project::{ClipId, EffectInstance, ItemId, Keyframe, Param, TrackItem};
 use filmcraft_time::Tick;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -26,9 +30,8 @@ struct Key {
 
 type Lane = (u64, usize, Option<usize>, String);
 
-fn param_mut<'a>(sequence: &'a mut Sequence, lane: &Lane, command: &str) -> Result<&'a mut Param> {
-    let (_, it) = sequence.find_item_mut(ClipId(lane.0)).ok_or_else(|| bad(command, "clip does not exist"))?;
-    let effect = it.effects.get_mut(lane.1).ok_or_else(|| bad(command, "effect does not exist"))?;
+fn param_mut<'a>(effects: &'a mut [EffectInstance], lane: &Lane, command: &str) -> Result<&'a mut Param> {
+    let effect = effects.get_mut(lane.1).ok_or_else(|| bad(command, "effect does not exist"))?;
     match lane.2 {
         Some(mask) => effect.masks.get_mut(mask).and_then(|m| m.param_mut(&lane.3)),
         None => effect.params.get_mut(&lane.3),
@@ -49,14 +52,37 @@ pub(crate) fn move_many(s: &mut Session, p: &Value) -> Result<Value> {
     let mut keys: Vec<Key> = serde_json::from_value(Value::Array(raw.clone())).map_err(|_| bad(COMMAND, "invalid keyframe reference"))?;
     let mut unique = HashSet::new();
     let mut saved = Vec::with_capacity(keys.len());
-    let q = s.active_sequence().ok_or(crate::EngineError::NoSequence)?;
-    let frame = q.settings.frame_rate.frame_duration();
+    // source clip effects: the media as a clip, at the media's frame rate
+    let media: Option<ItemId> = if crate::source_effects::names_item(p) {
+        Some(crate::source_effects::target_p(s, p, COMMAND)?.media().ok_or_else(|| bad(COMMAND, "need `item`"))?)
+    } else {
+        None
+    };
+    let view: Option<(TrackItem, Tick)> = match media {
+        Some(m) => {
+            let view = s.project.media_view(m).ok_or_else(|| bad(COMMAND, "the item is not media"))?;
+            let rate = s.project.resolve_media(m).map(|(_, c, _)| c.frame_rate()).ok_or_else(|| bad(COMMAND, "the item is not media"))?;
+            Some((view, rate.frame_duration()))
+        }
+        None => None,
+    };
+    let q = s.active_sequence();
+    let frame = match (&view, q) {
+        (Some((_, frame)), _) => *frame,
+        (None, Some(q)) => q.settings.frame_rate.frame_duration(),
+        (None, None) => return Err(crate::EngineError::NoSequence),
+    };
     let (mut low, mut high) = (i64::MIN, i64::MAX);
     for key in &keys {
         if key.param.len() > 256 || !unique.insert(key.clone()) {
             return Err(bad(COMMAND, "duplicate or invalid keyframe reference"));
         }
-        let (_, it) = q.find_item(ClipId(key.clip)).ok_or_else(|| bad(COMMAND, "clip does not exist"))?;
+        let it: &TrackItem = match (&view, q) {
+            (Some((view, _)), _) if media.is_some_and(|m| m.0 == key.clip) => view,
+            (Some(_), _) => return Err(bad(COMMAND, "with `item`, every key's `clip` is that item")),
+            (None, Some(q)) => q.find_item(ClipId(key.clip)).ok_or_else(|| bad(COMMAND, "clip does not exist"))?.1,
+            (None, None) => return Err(crate::EngineError::NoSequence),
+        };
         let effect = it.effects.get(key.effect).ok_or_else(|| bad(COMMAND, "effect does not exist"))?;
         let param = match key.mask {
             Some(mask) => effect.masks.get(mask).and_then(|m| m.param(&key.param)),
@@ -93,24 +119,40 @@ pub(crate) fn move_many(s: &mut Session, p: &Value) -> Result<Value> {
         key.time = k.time;
         lanes.entry((key.clip, key.effect, key.mask, key.param.clone())).or_default().push((from, k));
     }
-    s.edit_sequence("Move Keyframes", |sequence, _, _| {
-        for (lane, moved) in lanes {
-            let param = param_mut(sequence, &lane, COMMAND)?;
-            let from: HashSet<_> = moved.iter().map(|(t, _)| *t).collect();
-            let to: HashSet<_> = moved.iter().map(|(_, k)| k.time).collect();
-            // Remove all originals before inserting any destination: selected keys can move into
-            // each other's old positions without overwriting a key still waiting to be moved.
-            param.keyframes.retain(|k| !from.contains(&k.time) && !to.contains(&k.time));
-            param.keyframes.extend(moved.into_iter().map(|(_, k)| k));
-            param.keyframes.sort_by_key(|k| k.time);
-        }
-        Ok(())
-    })?;
+    match media {
+        Some(m) => crate::source_effects::edit_effects(s, crate::source_effects::EffectTarget::Media(m), "Move Keyframes", None, |it| {
+            for (lane, moved) in lanes {
+                move_in(&mut it.effects, &lane, moved)?;
+            }
+            Ok(())
+        })?,
+        None => s.edit_sequence("Move Keyframes", |sequence, _, _| {
+            for (lane, moved) in lanes {
+                let (_, it) = sequence.find_item_mut(ClipId(lane.0)).ok_or_else(|| bad(COMMAND, "clip does not exist"))?;
+                move_in(&mut it.effects, &lane, moved)?;
+            }
+            Ok(())
+        })?,
+    }
     Ok(json!({"delta":delta,"keyframes":keys}))
 }
 
+/// Replace the keys `moved` (from time, key at its new time) of one parameter.
+fn move_in(effects: &mut [EffectInstance], lane: &Lane, moved: Vec<(Tick, Keyframe)>) -> Result<()> {
+    let param = param_mut(effects, lane, COMMAND)?;
+    let from: HashSet<_> = moved.iter().map(|(t, _)| *t).collect();
+    let to: HashSet<_> = moved.iter().map(|(_, k)| k.time).collect();
+    // Remove all originals before inserting any destination: selected keys can move into
+    // each other's old positions without overwriting a key still waiting to be moved.
+    param.keyframes.retain(|k| !from.contains(&k.time) && !to.contains(&k.time));
+    param.keyframes.extend(moved.into_iter().map(|(_, k)| k));
+    param.keyframes.sort_by_key(|k| k.time);
+    Ok(())
+}
+
 /// `effects.setInterpolation` given a `keyframes` list: every listed key changes in one undo step,
-/// so a menu applies to the whole selection (#1916).
+/// so a menu applies to the whole selection (#1916). With `item` the keys belong to the source clip
+/// effects of that media item (their `clip` is the item's id).
 pub(crate) fn interpolate_many(s: &mut Session, p: &Value) -> Result<Value> {
     const SET: &str = "effects.setInterpolation";
     let raw = p.get("keyframes").and_then(Value::as_array).ok_or_else(|| bad(SET, "need keyframes"))?;
@@ -119,15 +161,33 @@ pub(crate) fn interpolate_many(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let keys: Vec<Key> = serde_json::from_value(Value::Array(raw.clone())).map_err(|_| bad(SET, "invalid keyframe reference"))?;
     let kind = crate::commands::interpolation_p(p);
-    s.edit_sequence("Keyframe Interpolation", |sequence, _, _| {
-        for key in &keys {
-            let lane = (key.clip, key.effect, key.mask, key.param.clone());
-            let param = param_mut(sequence, &lane, SET)?;
-            let k = param.keyframes.iter_mut().find(|k| k.time == key.time).ok_or_else(|| bad(SET, "keyframe does not exist"))?;
-            k.interp = kind;
-        }
+    let set = |effects: &mut [EffectInstance], key: &Key| -> Result<()> {
+        let lane = (key.clip, key.effect, key.mask, key.param.clone());
+        let param = param_mut(effects, &lane, SET)?;
+        let k = param.keyframes.iter_mut().find(|k| k.time == key.time).ok_or_else(|| bad(SET, "keyframe does not exist"))?;
+        k.interp = kind;
         Ok(())
-    })?;
+    };
+    if crate::source_effects::names_item(p) {
+        let media = crate::source_effects::target_p(s, p, SET)?.media().ok_or_else(|| bad(SET, "need `item`"))?;
+        if keys.iter().any(|k| k.clip != media.0) {
+            return Err(bad(SET, "with `item`, every key's `clip` is that item"));
+        }
+        crate::source_effects::edit_effects(s, crate::source_effects::EffectTarget::Media(media), "Keyframe Interpolation", None, |it| {
+            for key in &keys {
+                set(&mut it.effects, key)?;
+            }
+            Ok(())
+        })?;
+    } else {
+        s.edit_sequence("Keyframe Interpolation", |sequence, _, _| {
+            for key in &keys {
+                let (_, it) = sequence.find_item_mut(ClipId(key.clip)).ok_or_else(|| bad(SET, "clip does not exist"))?;
+                set(&mut it.effects, key)?;
+            }
+            Ok(())
+        })?;
+    }
     Ok(Value::Null)
 }
 

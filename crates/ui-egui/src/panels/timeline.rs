@@ -642,7 +642,17 @@ fn draw_clips(
             let x0 = layout.x_of(start);
             let x1 = layout.x_of(start + dur);
             let body = Rect::from_min_max(pos2(x0, r.rect.min.y + 1.0), pos2(x1.max(x0 + 1.0), r.rect.max.y - 1.0));
-            draw_clip(app, ctx, &p, body, it, r.kind, selection.contains(&it.id), &t, rate);
+            let badge = draw_clip(app, ctx, &p, body, it, r.kind, selection.contains(&it.id), &t, rate);
+            if let Some((badge, tip)) = badge {
+                app.auto.add(&format!("timeline.clip.{}.fx", it.id.0), badge.intersect(content), &tip);
+                if ctx.rect_contains_pointer(painter.layer_id(), badge.expand2(vec2(2.0, 3.0)).intersect(content)) {
+                    egui::Tooltip::always_open(ctx.clone(), painter.layer_id(), egui::Id::unique(("fx-badge", it.id.0)), egui::PopupAnchor::Pointer).show(
+                        |ui| {
+                            ui.label(&tip);
+                        },
+                    );
+                }
+            }
             if volume_line {
                 super::timeline_volume::paint(&p, body, it);
             }
@@ -674,7 +684,7 @@ fn draw_clips(
                 && let Some((_, it)) = seq.find_item(*cid)
             {
                 let body = Rect::from_min_max(pos2(layout.x_of(*start), r.rect.min.y + 1.0), pos2(layout.x_of(*start + *dur), r.rect.max.y - 1.0));
-                draw_clip(app, ctx, &p, body, it, r.kind, true, &t, rate);
+                let _ = draw_clip(app, ctx, &p, body, it, r.kind, true, &t, rate);
                 if volume_line {
                     super::timeline_volume::paint(&p, body, it);
                 }
@@ -686,7 +696,7 @@ fn draw_clips(
                 && mt.unwrap_or(home) == r.track
             {
                 let body = Rect::from_min_max(pos2(layout.x_of(*start), r.rect.min.y + 1.0), pos2(layout.x_of(*start + *dur), r.rect.max.y - 1.0));
-                draw_clip(app, ctx, &p, body, it, r.kind, true, &t, rate);
+                let _ = draw_clip(app, ctx, &p, body, it, r.kind, true, &t, rate);
                 app.auto.add(&format!("timeline.clip.{}.copy", cid.0), body.intersect(content), &it.name);
             }
         }

@@ -41,13 +41,22 @@ pub struct Badge {
     pub proxy: bool,
     /// Proxies are enabled (the badge is lit).
     pub proxy_on: bool,
+    /// How many source clip effects the media has (shared by its subclips).
+    pub source_fx: usize,
 }
 
 /// An item's badges in the Project panel, read from its media (a subclip reads its parent's):
 /// offline, with the word the badge shows and, for an Unreadable file, the error the media pool
 /// recorded; then whether a proxy is attached and whether proxies are on.
 pub fn media_badge(app: &FilmcraftApp, it: &filmcraft_project::ProjectItem) -> Badge {
-    let mut b = Badge { offline: false, offline_text: "", offline_reason: None, proxy: false, proxy_on: false };
+    let mut b = Badge {
+        offline: false,
+        offline_text: "",
+        offline_reason: None,
+        proxy: false,
+        proxy_on: false,
+        source_fx: app.session.project.source_effects_of(it.id).len(),
+    };
     let target = match &it.kind {
         ItemKind::Subclip { parent, .. } => app.session.project.item(*parent),
         _ => Some(it),
@@ -72,6 +81,23 @@ pub fn media_badge(app: &FilmcraftApp, it: &filmcraft_project::ProjectItem) -> B
     b
 }
 
+/// The "fx" mark of media with source clip effects, in `r`, with a tooltip that counts them.
+fn fx_mark(ui: &egui::Ui, r: Rect, n: usize, t: &Tokens, id: egui::Id) {
+    ui.painter().rect_filled(r, 2.0, t.fx_source);
+    ui.painter().text(
+        r.center(),
+        Align2::CENTER_CENTER,
+        "fx",
+        egui::FontId::new(10.0, egui::FontFamily::Name("semibold".into())),
+        Color32::from_rgb(0x10, 0x10, 0x10),
+    );
+    ui.interact(r, id, Sense::hover()).on_hover_text(tlf!("Source clip effects: {n}", n = n));
+}
+
+/// Room the List view keeps at the end of a name cell for the source clip effects mark: the
+/// 18 px mark and the 4 px after it.
+const FX_MARK_SLOT: f32 = 22.0;
+
 /// Paint the List view's offline icon and proxy chip from `at`, and register the offline badge.
 fn paint_badges(app: &mut FilmcraftApp, ui: &egui::Ui, b: &Badge, at: egui::Pos2, pre: &str, id: ItemId) {
     let t = app.tokens;
@@ -90,12 +116,15 @@ fn paint_badges(app: &mut FilmcraftApp, ui: &egui::Ui, b: &Badge, at: egui::Pos2
 }
 
 /// The part of a List-view name column `name_r` the item's name may use, and whether its badges
-/// get the rest. The badges (6 px after the name, then the offline icon's 18 px and the proxy chip's
-/// 16 px, as [`paint_badges`] draws them) keep their room at the column's end and a long name is cut
-/// short before them, so the name never hides an Unreadable badge and its reason. Only a column too
-/// narrow for the badges leaves them out.
+/// get the rest. The badges (6 px after the name, then the source clip effects mark's 22 px, the
+/// offline icon's 18 px and the proxy chip's 16 px, as the List view and [`paint_badges`] draw them)
+/// keep their room at the column's end and a long name is cut short before them, so the name never
+/// hides an Unreadable badge and its reason. Only a column too narrow for the badges leaves them out.
 fn name_room(b: &Badge, name_r: Rect) -> (Rect, bool) {
     let mut w = 6.0;
+    if b.source_fx > 0 {
+        w += FX_MARK_SLOT;
+    }
     if b.offline {
         w += 18.0;
     }
@@ -103,7 +132,7 @@ fn name_room(b: &Badge, name_r: Rect) -> (Rect, bool) {
         w += 16.0;
     }
     // the name starts 2 px into the column
-    let fits = (b.offline || b.proxy) && name_r.width() >= w + 2.0;
+    let fits = (b.source_fx > 0 || b.offline || b.proxy) && name_r.width() >= w + 2.0;
     let text_r = if fits { Rect::from_min_max(name_r.min, pos2(name_r.max.x - w, name_r.max.y)) } else { name_r };
     (text_r, fits)
 }
@@ -869,8 +898,15 @@ fn list_bin(app: &mut FilmcraftApp, ui: &mut egui::Ui, bin: &Bin, depth: usize, 
             if elided && ui.rect_contains_pointer(text_r) {
                 resp.clone().on_hover_text(&it.name);
             }
+            let mut after = end.min(text_r.max.x) + 6.0;
+            if badges && badge.source_fx > 0 {
+                let fx = Rect::from_min_size(pos2(after, r.center().y - 7.0), vec2(18.0, 14.0));
+                fx_mark(ui, fx, badge.source_fx, &t, egui::Id::unique(("source-fx-mark", id.0)));
+                app.auto.add(&format!("{}.item.{}.sourceFx", v.prefix, id.0), fx, "Source clip effects");
+                after = fx.max.x + 4.0;
+            }
             if badges {
-                paint_badges(app, ui, &badge, pos2(end.min(text_r.max.x) + 6.0, r.center().y), &v.prefix, id);
+                paint_badges(app, ui, &badge, pos2(after, r.center().y), &v.prefix, id);
             }
         }
         x += name_w;
@@ -992,6 +1028,11 @@ fn card(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, id: ItemId, pre: &st
         icons::paint(ui.painter(), Rect::from_center_size(pos2(band.min.x + 12.0, band.center().y), vec2(13.0, 13.0)), Icon::Offline, Color32::WHITE);
         ui.painter().text(pos2(band.min.x + 24.0, band.center().y), Align2::LEFT_CENTER, badge.offline_text, Tokens::ui(10.5), Color32::WHITE);
         offline_badge(app, ui, band, pre, id, &badge);
+    }
+    if badge.source_fx > 0 {
+        let fr = Rect::from_min_size(pos2(th.min.x + 4.0, th.min.y + 4.0), vec2(18.0, 14.0));
+        fx_mark(ui, fr, badge.source_fx, &t, egui::Id::unique((pre, "source-fx-mark", id.0)));
+        app.auto.add(&format!("{pre}.item.{}.sourceFx", id.0), fr, "Source clip effects");
     }
     if badge.proxy {
         let pr = Rect::from_min_size(pos2(th.max.x - 22.0, th.min.y + 4.0), vec2(18.0, 14.0));

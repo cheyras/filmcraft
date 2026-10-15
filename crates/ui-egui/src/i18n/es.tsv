@@ -904,7 +904,6 @@
 	Generate Keyframes	Generar fotogramas clave
 	Clip Volume	Volumen del clip
 	(no clip selected)	(ningún clip seleccionado)
-	Master · {name}	Maestro · {name}
 	Add Lumetri Color to clip	Añadir Color Lumetri al clip
 	Input LUT	LUT de entrada
 	Color	Color
@@ -3723,3 +3722,12 @@
 	Previous	Anterior
 	Next	Siguiente
 	Enter a valid HH:MM:SS:FF timecode	Introduce un código de tiempo válido HH:MM:SS:FF
+	Open media in the Source monitor to edit its source clip effects	Abre un archivo en el monitor de origen para editar los efectos de su clip de origen
+	Select a clip in the Timeline to edit its effects	Selecciona un clip en la línea de tiempo para editar sus efectos
+	Effect presets apply to clips in the Timeline, not to source clips	Los ajustes preestablecidos de efectos se aplican a clips de la línea de tiempo, no a clips de origen
+	Select a clip or open media in the Source monitor	Selecciona un clip o abre un archivo en el monitor de origen
+	Add Lumetri Color to source	Añadir Color Lumetri al origen
+	Lumetri Color {n}	Color Lumetri {n}
+	Clip effects: {n}	Efectos del clip: {n}
+	Fixed effects changed	Efectos fijos modificados
+	Source clip effects: {n}	Efectos del clip de origen: {n}

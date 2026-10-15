@@ -11,8 +11,8 @@
 //! edit.
 //! `effects.list {"item": id}` reads the list.
 
-use filmcraft_project::{ClipId, EffectDef, ItemId, ItemKind, Project, TrackItem, TrackKind};
-use filmcraft_time::{Tick, TimeRange};
+use filmcraft_project::{ClipId, EffectDef, ItemId, ItemKind, Project, TrackItem};
+use filmcraft_time::Tick;
 use serde_json::{Value, json};
 
 use crate::commands::{bad, clip_p};
@@ -154,15 +154,7 @@ pub(crate) fn edit_effects<R>(
         }),
         EffectTarget::Media(m) => {
             let body = move |pr: &mut Project, _: &mut EditorState| {
-                let (rate, duration) = match pr.item(m).map(|i| &i.kind) {
-                    Some(ItemKind::Media(c)) => (c.info.frame_rate(), c.info.duration),
-                    _ => return Err(bad("source effects", "the item is not media")),
-                };
-                // (building the view takes a clip id; give it back)
-                let next_id = pr.next_id;
-                let view = pr.make_track_item(m, TrackKind::Video, Tick::ZERO, TimeRange::new(Tick::ZERO, duration), rate);
-                pr.next_id = next_id;
-                let mut view = view.ok_or_else(|| bad("source effects", "the item is not media"))?;
+                let mut view = pr.media_view(m).ok_or_else(|| bad("source effects", "the item is not media"))?;
                 let Some(ItemKind::Media(c)) = pr.item_mut(m).map(|i| &mut i.kind) else {
                     return Err(bad("source effects", "the item is not media"));
                 };

@@ -68,6 +68,7 @@ mod shared_docking_ui;
 mod source_drag_ui;
 mod source_effects_ui;
 mod source_playback_ui;
+mod source_target_ui;
 mod status_bar_ui;
 mod timecode_ui;
 mod timeline_drop_ui;

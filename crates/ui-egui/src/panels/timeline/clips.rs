@@ -190,7 +190,7 @@ pub(super) fn draw_clip(
     selected: bool,
     t: &Tokens,
     rate: FrameRate,
-) {
+) -> Option<(Rect, String)> {
     let base = it.custom_label_color.map_or_else(
         || label_color(app, it.label),
         |c| {
@@ -254,7 +254,22 @@ pub(super) fn draw_clip(
         draw_waveform(app, p, body, it, Color32::from_rgb(fill.r() / 2, fill.g() / 2, fill.b() / 2));
     }
     let clip_p = p.with_clip_rect(body.shrink2(vec2(1.0, 0.0)).intersect(p.clip_rect()));
-    // name band (View ▸ the wrench menu's Show Video Names / Show Audio Names)
+    // fx badge right-aligned in the header: yellow for effects on the clip, grey when only its fixed
+    // effects (Motion, Opacity…) are changed, green for source clip effects on its media, and
+    // both colours ("f" and "x") for both. Laid out first so the name stops short of it.
+    let badge = fx_badge(app, it, kind).filter(|_| w > 40.0).map(|b| {
+        let font = egui::FontId::new(11.0, egui::FontFamily::Name("semibold".into()));
+        let (first, second) = b.colors;
+        let mut job = egui::text::LayoutJob::default();
+        job.append("f", 0.0, egui::TextFormat::simple(font.clone(), first));
+        job.append("x", 0.0, egui::TextFormat::simple(font, second));
+        let galley = clip_p.layout_job(job);
+        let at = pos2(body.max.x - 6.0 - galley.size().x, body.min.y + 8.5 - galley.size().y / 2.0);
+        let rect = Rect::from_min_size(at, galley.size());
+        clip_p.galley(at, galley, first);
+        (rect, b.tip)
+    });
+    // name band, truncated with an ellipsis before the badge (or the clip's right edge) (View ▸ the wrench menu's Show Video Names / Show Audio Names)
     // a hidden name keeps the multicam angle and the speed, which say something the name does not
     let names = if kind == TrackKind::Video { app.ui.timeline.show_video_names } else { app.ui.timeline.show_audio_names };
     let mut label = if names { it.name.clone() } else { String::new() };
@@ -267,30 +282,22 @@ pub(super) fn draw_clip(
         label = if label.is_empty() { speed } else { format!("{label} {speed}") };
     }
     if w > 24.0 && !label.is_empty() {
-        clip_p.text(
-            pos2(body.min.x + 6.0, body.min.y + 8.5),
-            Align2::LEFT_CENTER,
-            label,
-            Tokens::ui(11.5),
-            if it.custom_label_color.is_some() && u32::from(fill.r()) * 299 + u32::from(fill.g()) * 587 + u32::from(fill.b()) * 114 > 140_000 {
-                Color32::BLACK
-            } else if it.enabled {
-                Color32::from_rgb(0xd9, 0xd9, 0xd9)
-            } else {
-                t.text_faint
-            },
-        );
-    }
-    // fx badge right-aligned in the header (italic-ish "fx")
-    if (it.has_standard_effects() || it.has_modified_intrinsics()) && w > 40.0 {
-        let col = if it.has_standard_effects() { Color32::from_rgb(0xe8, 0xc5, 0x4a) } else { Color32::from_rgb(0x91, 0xa2, 0xac) };
-        clip_p.text(
-            pos2(body.max.x - 6.0, body.min.y + 8.5),
-            Align2::RIGHT_CENTER,
-            "fx",
-            egui::FontId::new(11.0, egui::FontFamily::Name("semibold".into())),
-            col,
-        );
+        let left = body.min.x + 6.0;
+        let right = badge.as_ref().map_or(body.max.x - 6.0, |(r, _)| r.min.x - 4.0);
+        let color = if it.custom_label_color.is_some() && u32::from(fill.r()) * 299 + u32::from(fill.g()) * 587 + u32::from(fill.b()) * 114 > 140_000 {
+            Color32::BLACK
+        } else if it.enabled {
+            Color32::from_rgb(0xd9, 0xd9, 0xd9)
+        } else {
+            t.text_faint
+        };
+        let mut job = egui::text::LayoutJob::single_section(label, egui::TextFormat::simple(Tokens::ui(11.5), color));
+        job.wrap.max_width = (right - left).max(0.0);
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        job.wrap.overflow_character = Some('…');
+        let g = clip_p.layout_job(job);
+        clip_p.galley(pos2(left, body.min.y + 8.5 - g.size().y / 2.0), g, color);
     }
     // corner triangles where the clip reaches the media's first/last frame (no handles)
     let media_dur = app.session.project.item(it.item).map(|i| i.duration());
@@ -314,6 +321,41 @@ pub(super) fn draw_clip(
         p.rect_stroke(body.shrink(1.0), 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
         p.rect_stroke(body, 0.0, Stroke::new(2.0, t.clip_selected_border), StrokeKind::Inside);
     }
+    badge
+}
+
+/// The fx badge of a clip: its colours ("f", "x") and the tooltip that says what is behind it.
+struct FxBadge {
+    colors: (Color32, Color32),
+    tip: String,
+}
+
+fn fx_badge(app: &FilmcraftApp, it: &TrackItem, kind: TrackKind) -> Option<FxBadge> {
+    let t = app.tokens;
+    let on_clip = it.has_standard_effects();
+    // source clip effects are video effects: an audio clip of the same media has none
+    let source = if kind == TrackKind::Video { app.session.project.source_effects_of(it.item).len() } else { 0 };
+    let mut lines = Vec::new();
+    if on_clip {
+        let n = it.effects.iter().filter(|e| e.def().is_some_and(|d| !d.intrinsic) && !filmcraft_project::graphic::is_layer(e)).count();
+        lines.push(tlf!("Clip effects: {n}", n = n));
+    } else if it.has_modified_intrinsics() {
+        lines.push(tl!("Fixed effects changed").to_string());
+    }
+    if source > 0 {
+        lines.push(tlf!("Source clip effects: {n}", n = source));
+    }
+    let first = if on_clip {
+        t.fx_clip
+    } else if source > 0 {
+        t.fx_source
+    } else if lines.is_empty() {
+        return None;
+    } else {
+        t.fx_fixed
+    };
+    let second = if source > 0 { t.fx_source } else { first };
+    Some(FxBadge { colors: (first, second), tip: lines.join("\n") })
 }
 
 /// 45° hatching over `r` (transitions, and the empty end of a nested sequence clip).
@@ -357,5 +399,56 @@ pub(super) fn draw_transition(p: &egui::Painter, r: Rect, trn: &filmcraft_projec
         let tr = Rect::from_min_size(r.min + vec2(2.0, 2.0), vec2((r.width() - 4.0).min(80.0), 13.0));
         cp.rect_filled(tr, 0.0, Color32::from_black_alpha(170));
         cp.text(pos2(tr.min.x + 3.0, tr.center().y), Align2::LEFT_CENTER, name, Tokens::ui(10.5), Color32::from_rgb(0xd9, 0xd9, 0xd9));
+    }
+}
+
+#[cfg(test)]
+mod fx_badge_tests {
+    use super::*;
+    use filmcraft_project::ClipId;
+    use serde_json::json;
+
+    /// The demo project's first video clip, and the app.
+    fn demo() -> (FilmcraftApp, ClipId, filmcraft_project::ItemId) {
+        let mut s = filmcraft_engine::Session::default();
+        s.execute("file.openDemoProject", json!({})).unwrap();
+        let it = s.active_sequence().unwrap().video_tracks[0].items[0].clone();
+        (FilmcraftApp::new(s), it.id, it.item)
+    }
+
+    fn badge(app: &FilmcraftApp, clip: ClipId, kind: TrackKind) -> Option<FxBadge> {
+        let it = app.session.active_sequence().unwrap().find_item(clip).unwrap().1;
+        fx_badge(app, it, kind)
+    }
+
+    /// Four states, three colours: nothing, only changed fixed effects (grey), effects on the clip
+    /// (yellow), source clip effects on its media (green), and both (yellow "f", green "x").
+    #[test]
+    fn the_badge_tells_clip_effects_from_source_effects() {
+        let (mut app, clip, media) = demo();
+        let t = app.tokens;
+        assert_ne!(t.fx_clip, t.fx_source);
+        assert_ne!(t.fx_fixed, t.fx_source);
+        assert_ne!(t.fx_fixed, t.fx_clip);
+        assert!(badge(&app, clip, TrackKind::Video).is_none(), "no effects, no badge");
+        app.session.execute("effects.setParam", json!({"clip": clip.0, "effect": "opacity", "param": "opacity", "value": 50.0})).unwrap();
+        let b = badge(&app, clip, TrackKind::Video).unwrap();
+        assert_eq!((b.colors, b.tip.as_str()), ((t.fx_fixed, t.fx_fixed), "Fixed effects changed"));
+        let applied = app.session.execute("effects.apply", json!({"clips": [clip.0], "effect": "invert"})).unwrap();
+        let invert = applied["applied"][0]["index"].as_u64().unwrap();
+        let b = badge(&app, clip, TrackKind::Video).unwrap();
+        assert_eq!((b.colors, b.tip.as_str()), ((t.fx_clip, t.fx_clip), "Clip effects: 1"));
+        app.session.execute("effects.apply", json!({"item": media.0, "effect": "gaussian_blur"})).unwrap();
+        let b = badge(&app, clip, TrackKind::Video).unwrap();
+        assert_eq!((b.colors, b.tip.as_str()), ((t.fx_clip, t.fx_source), "Clip effects: 1\nSource clip effects: 1"));
+        app.session.execute("effects.remove", json!({"clip": clip.0, "index": invert})).unwrap();
+        app.session.execute("effects.setParam", json!({"clip": clip.0, "effect": "opacity", "param": "opacity", "value": 100.0})).unwrap();
+        let b = badge(&app, clip, TrackKind::Video).unwrap();
+        assert_eq!((b.colors, b.tip.as_str()), ((t.fx_source, t.fx_source), "Source clip effects: 1"));
+        // changed fixed effects and source effects say both
+        app.session.execute("effects.setParam", json!({"clip": clip.0, "effect": "opacity", "param": "opacity", "value": 50.0})).unwrap();
+        assert_eq!(badge(&app, clip, TrackKind::Video).unwrap().tip, "Fixed effects changed\nSource clip effects: 1");
+        // source effects are video effects: an audio clip of the media has no badge for them
+        assert!(badge(&app, clip, TrackKind::Audio).is_none_or(|b| !b.tip.contains("Source")));
     }
 }

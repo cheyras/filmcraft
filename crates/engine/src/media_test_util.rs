@@ -28,6 +28,26 @@ pub fn make_movie(path: &Path, scene: DemoScene, w: u32, h: u32, frames: i64) {
 /// [`make_movie`] at `rate`, whose first frame is at timecode `start_tc` (frames at `rate`). Only
 /// `.mxf` (OP1a, ProRes + PCM) records it: MOV and MP4 exports write no timecode track.
 pub fn make_movie_at(path: &Path, scene: DemoScene, w: u32, h: u32, rate: FrameRate, frames: i64, start_tc: i64) {
+    write_movie(path, scene, w, h, frames, MovieOpts { rate, start_tc, color: filmcraft_color::ColorPipeline::REC709, stops: 0.0 });
+}
+
+/// [`make_movie`] from a sequence with colour pipeline `color`: an HDR working space makes the
+/// file PQ or HLG (and says so in its tags). `stops` of exposure on the clip put highlights above
+/// SDR white in an HDR file.
+pub fn make_movie_in(path: &Path, scene: DemoScene, w: u32, h: u32, frames: i64, color: filmcraft_color::ColorPipeline, stops: f64) {
+    write_movie(path, scene, w, h, frames, MovieOpts { rate: FrameRate::FPS_24, start_tc: 0, color, stops });
+}
+
+/// How [`write_movie`] makes its file: frame rate, start timecode, colour pipeline and exposure.
+struct MovieOpts {
+    rate: FrameRate,
+    start_tc: i64,
+    color: filmcraft_color::ColorPipeline,
+    stops: f64,
+}
+
+fn write_movie(path: &Path, scene: DemoScene, w: u32, h: u32, frames: i64, opts: MovieOpts) {
+    let MovieOpts { rate, start_tc, color, stops } = opts;
     let dur = rate.tick_of(frames);
     let src = GeneratorSource::new(Generator::Demo(scene), w, h, rate, dur);
     let info = src.info().clone();
@@ -45,11 +65,16 @@ pub fn make_movie_at(path: &Path, scene: DemoScene, w: u32, h: u32, rate: FrameR
         source_effects: Vec::new(),
     };
     let item = p.add_item("scene", Label::Iris, ItemKind::Media(Box::new(clip)), None);
-    let seq = p.new_sequence("s", SequenceSettings { width: w, height: h, frame_rate: rate, ..Default::default() }, 1, 1, None);
+    let seq = p.new_sequence("s", SequenceSettings { width: w, height: h, frame_rate: rate, color, ..Default::default() }, 1, 1, None);
     let r = TimeRange::new(Tick::ZERO, dur);
     let mut v = p.make_track_item(item, TrackKind::Video, Tick::ZERO, r, rate).unwrap();
     for e in &mut v.effects {
         filmcraft_project::resolve_auto_points(e, (w, h), (w, h));
+    }
+    if stops != 0.0 {
+        let mut lumetri = filmcraft_project::find_effect("lumetri").unwrap().instance();
+        lumetri.params.get_mut("exposure").unwrap().value = filmcraft_project::ParamValue::Float(stops);
+        v.effects.push(lumetri);
     }
     let a = p.make_track_item(item, TrackKind::Audio, Tick::ZERO, r, rate).unwrap();
     let q = p.sequence_mut(seq).unwrap();

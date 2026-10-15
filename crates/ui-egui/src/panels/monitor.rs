@@ -397,6 +397,14 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
     // ---- transport buttons
     let row3 = Rect::from_min_size(pos2(rect.min.x, zoom_bar.max.y + 4.0), vec2(rect.width(), 32.0));
     transport(app, ui, row3, which);
+    source_effect_drop(app, ui, rect, which);
+}
+
+/// An effect dragged from the Effects panel onto the Source monitor becomes a source clip effect.
+fn source_effect_drop(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which) {
+    if which == Which::Source {
+        crate::panels::fx_target::accept_effect_drop(app, ui, rect);
+    }
 }
 
 /// The controls row under the picture: timecode, duration, zoom, resolution, the wrench menu
